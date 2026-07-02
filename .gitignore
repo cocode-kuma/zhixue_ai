@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+data/
+.vs/
+.env
+.env.*
+!.env.example
+npm-debug.log*
+server.out.log
+server.err.log
+web.out.log
+web.err.log
+*.zip
