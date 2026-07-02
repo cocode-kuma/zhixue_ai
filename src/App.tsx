@@ -682,8 +682,8 @@ function LearningWorkspace({
     daily_plan?: Array<{ day: string; concept: string; practice: string; review: string; minutes: number }>;
     review_plan?: string[];
     acceptance_checks?: string[];
-    tasks?: string[];
-    milestones?: string[];
+    tasks?: unknown[];
+    milestones?: unknown[];
   } | null;
   generatedQuiz:
     | {
@@ -813,8 +813,8 @@ function LearningWorkspace({
               <h3>{generatedQuiz.title ?? "测验"}</h3>
               {generatedQuiz.questions?.map((question, index) => (
                 <article key={`${question.question}-${index}`}>
-                  <strong>{index + 1}. {question.type}</strong>
-                  <MarkdownView>{question.question}</MarkdownView>
+                  <strong>{index + 1}. {formatAiValue(question.type)}</strong>
+                  <MarkdownView>{formatAiValue(question.question)}</MarkdownView>
                   <textarea
                     placeholder="输入你的答案"
                     value={quizAnswers[String(index)] ?? ""}
@@ -822,7 +822,7 @@ function LearningWorkspace({
                   />
                   <details>
                     <summary>查看参考答案</summary>
-                    <MarkdownView>{question.answer}</MarkdownView>
+                    <MarkdownView>{formatAiValue(question.answer)}</MarkdownView>
                   </details>
                 </article>
               ))}
@@ -878,19 +878,19 @@ function LearningWorkspace({
                   <div className="daily-plan">
                     {generatedPlan.daily_plan.map((day) => (
                       <article key={day.day}>
-                        <strong>{day.day} · {day.minutes}分钟</strong>
-                        <MarkdownView>{`**概念：** ${day.concept}\n\n**练习：** ${day.practice}\n\n**复习：** ${day.review}`}</MarkdownView>
+                        <strong>{formatAiValue(day.day)} · {formatAiValue(day.minutes)}分钟</strong>
+                        <MarkdownView>{`**概念：** ${formatAiValue(day.concept)}\n\n**练习：** ${formatAiValue(day.practice)}\n\n**复习：** ${formatAiValue(day.review)}`}</MarkdownView>
                       </article>
                     ))}
                   </div>
                 </>
               ) : (
-                <MarkdownView>{generatedPlan.tasks?.map((task) => `- ${task}`).join("\n") ?? ""}</MarkdownView>
+                <MarkdownView>{markdownBulletList(generatedPlan.tasks)}</MarkdownView>
               )}
               <h4>复习安排</h4>
-              <MarkdownView>{generatedPlan.review_plan?.map((item) => `- ${item}`).join("\n") ?? ""}</MarkdownView>
+              <MarkdownView>{markdownBulletList(generatedPlan.review_plan)}</MarkdownView>
               <h4>验收标准</h4>
-              <MarkdownView>{(generatedPlan.acceptance_checks ?? generatedPlan.milestones)?.map((item) => `- ${item}`).join("\n") ?? ""}</MarkdownView>
+              <MarkdownView>{markdownBulletList(generatedPlan.acceptance_checks ?? generatedPlan.milestones)}</MarkdownView>
             </div>
           ) : null}
         </section>
@@ -910,7 +910,7 @@ function LearningWorkspace({
             {knowledgeCards.map((card) => (
               <article className="tool-item" key={card.id}>
                 <strong>{card.title}</strong>
-                <MarkdownView>{`**一句话定义：** ${card.definition}\n\n**核心要点：**\n${markdownListFromJsonText(card.keyPoints)}\n\n**易错点：** ${card.mistakes}\n\n**关联概念：**\n${markdownListFromJsonText(card.related)}`}</MarkdownView>
+                <MarkdownView>{`**一句话定义：** ${formatAiValue(card.definition)}\n\n**核心要点：**\n${markdownListFromJsonText(card.keyPoints)}\n\n**易错点：** ${formatAiValue(card.mistakes)}\n\n**关联概念：**\n${markdownListFromJsonText(card.related)}`}</MarkdownView>
               </article>
             ))}
           </div>
@@ -1526,7 +1526,7 @@ function TeacherPanel() {
                 <strong>{item.name} · {item.grade}</strong>
                 <span>{item.status} · {item.score}分 {item.submittedAt ? `· ${new Date(item.submittedAt).toLocaleString("zh-CN")}` : ""}</span>
               {item.report?.summary ? <MarkdownView>{item.report.summary}</MarkdownView> : <p>暂未提交或暂无报告。</p>}
-              {item.report?.wrong_points?.length ? <MarkdownView>{`**薄弱点：** ${item.report.wrong_points.join("、")}`}</MarkdownView> : null}
+              {item.report?.wrong_points?.length ? <MarkdownView>{`**薄弱点：**\n${markdownBulletList(item.report.wrong_points)}`}</MarkdownView> : null}
               </article>
             ))}
             {submissions.length === 0 ? <div className="empty-tool">选择一份作业查看学生提交情况。</div> : null}
@@ -1663,8 +1663,8 @@ function ReportsPanel() {
               <strong>{item.title} · {item.score}分</strong>
               <span>{item.type === "quiz" ? "测验" : "作业"} · {new Date(item.createdAt).toLocaleString("zh-CN")}</span>
               <MarkdownView>{parsed.summary ?? "暂无总结"}</MarkdownView>
-              {parsed.correct_points?.length ? <MarkdownView>{`**已掌握：** ${parsed.correct_points.join("、")}`}</MarkdownView> : null}
-              <MarkdownView>{`**错因：** ${parsed.wrong_points?.join("、") || "暂无"}`}</MarkdownView>
+              {parsed.correct_points?.length ? <MarkdownView>{`**已掌握：**\n${markdownBulletList(parsed.correct_points)}`}</MarkdownView> : null}
+              <MarkdownView>{`**错因：**\n${markdownBulletList(parsed.wrong_points) || "暂无"}`}</MarkdownView>
               <Button type="button" variant="contained" onClick={async () => {
                 const wrong = parsed.wrong_questions?.[0];
                 setGeneratingId(item.sourceId);
@@ -1693,7 +1693,7 @@ function ReportsPanel() {
           <h3>{practice.content.title ?? "变式练习"}</h3>
           {practice.content.questions?.map((question, index) => (
             <article key={`${question.question}-${index}`}>
-              <MarkdownView>{`**${index + 1}.** ${question.question}\n\n**提示：** ${question.hint}`}</MarkdownView>
+              <MarkdownView>{`**${index + 1}.** ${formatAiValue(question.question)}\n\n**提示：** ${formatAiValue(question.hint)}`}</MarkdownView>
               <textarea value={answers[String(index)] ?? ""} onChange={(event) => setAnswers((state) => ({ ...state, [String(index)]: event.target.value }))} />
             </article>
           ))}
@@ -1718,7 +1718,7 @@ function GoalsPanel() {
   const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
   const [durationDays, setDurationDays] = useState(7);
-  const [goals, setGoals] = useState<Array<{ id: string; title: string; plan: { summary?: string; days?: any[]; checkpoints?: string[] }; progress: number; status: string }>>([]);
+  const [goals, setGoals] = useState<Array<{ id: string; title: string; plan: { summary?: string; days?: unknown[]; checkpoints?: unknown[] }; progress: number; status: string }>>([]);
 
   async function load() {
     const result = await loadGoals();
@@ -1749,7 +1749,7 @@ function GoalsPanel() {
               await updateGoalProgress(goal.id, progress);
               setGoals((state) => state.map((item) => item.id === goal.id ? { ...item, progress } : item));
             }} />
-            <MarkdownView>{goal.plan.days?.map((day) => `- **${day.day}：** ${day.task} · ${day.minutes}分钟`).join("\n") ?? ""}</MarkdownView>
+            <MarkdownView>{markdownBulletList(goal.plan.days ?? goal.plan.checkpoints)}</MarkdownView>
           </article>
         ))}
       </div>
@@ -1930,11 +1930,56 @@ function MarkdownView({ children }: { children: string }) {
 function markdownListFromJsonText(value: string) {
   try {
     const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) return parsed.map((item) => `- ${String(item)}`).join("\n");
+    if (Array.isArray(parsed)) return markdownBulletList(parsed);
   } catch {
     // Keep existing plain text when older records are not JSON arrays.
   }
   return value;
+}
+
+function markdownBulletList(value: unknown) {
+  const items = Array.isArray(value) ? value : value ? [value] : [];
+  return items.map((item) => `- ${formatAiValue(item)}`).join("\n");
+}
+
+function formatAiValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(formatAiValue).filter(Boolean).join("；");
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const primary = ["day", "title", "task", "concept", "practice", "review", "check", "standard", "point", "summary"]
+      .map((key) => formatField(key, record[key]))
+      .filter(Boolean);
+    const rest = Object.entries(record)
+      .filter(([key]) => !["day", "title", "task", "concept", "practice", "review", "check", "standard", "point", "summary"].includes(key))
+      .map(([key, item]) => formatField(key, item))
+      .filter(Boolean);
+    return [...primary, ...rest].join("；");
+  }
+  return String(value);
+}
+
+function formatField(key: string, value: unknown) {
+  const text = formatAiValue(value);
+  if (!text) return "";
+  const labels: Record<string, string> = {
+    acceptance: "验收",
+    check: "检查",
+    concept: "概念",
+    day: "时间",
+    evidence: "依据",
+    minutes: "分钟",
+    point: "知识点",
+    practice: "练习",
+    priority: "优先级",
+    review: "复习",
+    standard: "标准",
+    summary: "总结",
+    task: "任务",
+    title: "标题"
+  };
+  return `**${labels[key] ?? key}：** ${text}`;
 }
 
 function splitQuestionText(text: string) {
@@ -2009,8 +2054,8 @@ function GradingReportView({ report }: { report: { score: number; summary?: stri
     <div className="grading-report">
       <strong>批改结果：{report.score}分</strong>
       {report.summary ? <MarkdownView>{report.summary}</MarkdownView> : null}
-      {report.wrong_points?.length ? <MarkdownView>{`**问题：** ${report.wrong_points.join("、")}`}</MarkdownView> : null}
-      {report.suggestions?.length ? <MarkdownView>{`**建议：** ${report.suggestions.join("、")}`}</MarkdownView> : null}
+      {report.wrong_points?.length ? <MarkdownView>{`**问题：**\n${markdownBulletList(report.wrong_points)}`}</MarkdownView> : null}
+      {report.suggestions?.length ? <MarkdownView>{`**建议：**\n${markdownBulletList(report.suggestions)}`}</MarkdownView> : null}
     </div>
   );
 }

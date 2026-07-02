@@ -43,6 +43,7 @@ AI_API_BASE=https://你的AI网关地址/v1
 AI_API_KEY=你的真实API_KEY
 AI_MODEL=你的文本模型名
 AI_VISION_MODEL=你的视觉模型名
+AI_REQUEST_TIMEOUT_MS=120000
 JWT_SECRET=请改成一串很长的随机字符串
 APP_ORIGINS=https://你的学校域名
 PORT=8787

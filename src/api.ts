@@ -39,8 +39,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 async function readableError(response: Response) {
   try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? "请求失败";
+    const body = (await response.json()) as { error?: string; message?: string };
+    return body.message ?? body.error ?? "请求失败";
   } catch {
     return "请求失败";
   }
@@ -74,8 +74,8 @@ export async function bootstrap() {
       daily_plan?: Array<{ day: string; concept: string; practice: string; review: string; minutes: number }>;
       review_plan?: string[];
       acceptance_checks?: string[];
-      tasks?: string[];
-      milestones?: string[];
+      tasks?: unknown[];
+      milestones?: unknown[];
     };
     latestQuiz: null | {
       id?: string;
@@ -262,10 +262,10 @@ export async function generateStudyPlan(payload: {
         summary?: string;
         weakness_analysis?: Array<{ point: string; evidence: string; priority: string }>;
         daily_plan?: Array<{ day: string; concept: string; practice: string; review: string; minutes: number }>;
-        review_plan?: string[];
-        acceptance_checks?: string[];
-        tasks?: string[];
-        milestones?: string[];
+      review_plan?: string[];
+      acceptance_checks?: string[];
+      tasks?: unknown[];
+      milestones?: unknown[];
       };
     };
     stats: StudyStats;
@@ -494,7 +494,7 @@ export async function submitAdaptivePractice(id: string, answers: Record<string,
 }
 
 export async function createGoal(payload: { title: string; subject: string; durationDays: number }) {
-  return request<{ goal: { id: string; title: string; plan: { summary?: string; days?: any[]; checkpoints?: string[] }; progress: number } }>(
+  return request<{ goal: { id: string; title: string; plan: { summary?: string; days?: unknown[]; checkpoints?: unknown[] }; progress: number } }>(
     "/api/goals",
     {
       method: "POST",
@@ -504,7 +504,7 @@ export async function createGoal(payload: { title: string; subject: string; dura
 }
 
 export async function loadGoals() {
-  return request<{ goals: Array<{ id: string; title: string; subject: string; plan: { summary?: string; days?: any[]; checkpoints?: string[] }; progress: number; status: string }> }>("/api/goals");
+  return request<{ goals: Array<{ id: string; title: string; subject: string; plan: { summary?: string; days?: unknown[]; checkpoints?: unknown[] }; progress: number; status: string }> }>("/api/goals");
 }
 
 export async function updateGoalProgress(id: string, progress: number) {

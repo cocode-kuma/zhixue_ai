@@ -820,6 +820,13 @@ app.post("/api/ocr", requireAuth, async (req: AuthedRequest, res) => {
       jobId,
       req.user!.id
     );
+    if (message === "missing_ai_vision_model") {
+      res.status(503).json({
+        error: "vision_model_not_configured",
+        message: "拍照识题需要在服务端配置AI_VISION_MODEL。"
+      });
+      return;
+    }
     res.status(502).json({ error: "ocr_failed", message });
   }
 });

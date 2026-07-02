@@ -9,7 +9,7 @@ type AiConfig = {
 function getAiConfig(options: { vision?: boolean } = {}): AiConfig {
   const apiKey = readRequiredEnv("AI_API_KEY");
   const baseUrl = readRequiredEnv("AI_API_BASE").replace(/\/+$/, "");
-  const model = (options.vision ? process.env.AI_VISION_MODEL?.trim() : "") || readRequiredEnv("AI_MODEL");
+  const model = options.vision ? readRequiredEnv("AI_VISION_MODEL") : readRequiredEnv("AI_MODEL");
   return { apiKey, baseUrl, model };
 }
 
@@ -20,7 +20,7 @@ function readRequiredEnv(name: string) {
 }
 
 function requestTimeout() {
-  return Number(process.env.AI_REQUEST_TIMEOUT_MS ?? 60_000);
+  return Number(process.env.AI_REQUEST_TIMEOUT_MS ?? 120_000);
 }
 
 export function inspectSafety(message: string) {

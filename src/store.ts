@@ -64,8 +64,8 @@ interface StudyState {
     daily_plan?: Array<{ day: string; concept: string; practice: string; review: string; minutes: number }>;
     review_plan?: string[];
     acceptance_checks?: string[];
-    tasks?: string[];
-    milestones?: string[];
+    tasks?: unknown[];
+    milestones?: unknown[];
   } | null;
   generatedQuiz:
     | {
