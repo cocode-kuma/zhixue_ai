@@ -129,7 +129,10 @@ app.get("/api/ai-health", (_req, res) => {
     baseConfigured: Boolean(process.env.AI_API_BASE),
     keyConfigured: Boolean(process.env.AI_API_KEY),
     modelConfigured: Boolean(process.env.AI_MODEL),
-    visionModelConfigured: Boolean(process.env.AI_VISION_MODEL)
+    visionModelConfigured: Boolean(process.env.AI_VISION_MODEL),
+    localOcrAvailable: true,
+    ocrLangConfigured: Boolean(process.env.OCR_LANG),
+    ocrLangPathConfigured: Boolean(process.env.OCR_LANG_PATH)
   });
 });
 
@@ -820,14 +823,25 @@ app.post("/api/ocr", requireAuth, async (req: AuthedRequest, res) => {
       jobId,
       req.user!.id
     );
-    if (message === "missing_ai_vision_model") {
-      res.status(503).json({
-        error: "vision_model_not_configured",
-        message: "拍照识题需要在服务端配置AI_VISION_MODEL。"
+    if (message === "invalid_image_data") {
+      res.status(400).json({ error: "invalid_image_data", message: "图片格式不正确，请上传 PNG、JPG 或 WebP 图片。" });
+      return;
+    }
+    if (message === "local_ocr_empty_content" || message === "ocr_empty_content") {
+      res.status(422).json({
+        error: "ocr_no_text_detected",
+        message: "未识别到清晰文字，请换一张更清晰、题目区域更完整的图片。"
       });
       return;
     }
-    res.status(502).json({ error: "ocr_failed", message });
+    if (message === "invalid_ocr_cache_method") {
+      res.status(500).json({
+        error: "ocr_config_invalid",
+        message: "OCR_CACHE_METHOD 配置不正确，可选值为 write、readOnly、refresh 或 none。"
+      });
+      return;
+    }
+    res.status(502).json({ error: "ocr_failed", message: "OCR识别暂时不可用，请稍后重试或联系管理员检查OCR配置。" });
   }
 });
 

@@ -14,3 +14,5 @@ server.err.log
 web.out.log
 web.err.log
 *.zip
+*.traineddata
+*.traineddata.gz

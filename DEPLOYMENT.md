@@ -42,14 +42,23 @@ cp .env.example .env
 AI_API_BASE=https://你的AI网关地址/v1
 AI_API_KEY=你的真实API_KEY
 AI_MODEL=你的文本模型名
-AI_VISION_MODEL=你的视觉模型名
+AI_VISION_MODEL=
 AI_REQUEST_TIMEOUT_MS=120000
+OCR_LANG=chi_sim+eng
+OCR_LANG_PATH=
+OCR_CACHE_PATH=
+OCR_CACHE_METHOD=write
 JWT_SECRET=请改成一串很长的随机字符串
 APP_ORIGINS=https://你的学校域名
 PORT=8787
 ```
 
 不要把 `.env` 放到公开下载目录，也不要发给别人。
+
+拍照识题有两种部署方式：
+
+- 配置 `AI_VISION_MODEL` 后，服务端会调用视觉模型识别题目图片。
+- 不配置 `AI_VISION_MODEL` 时，服务端自动使用 Tesseract.js 本地 OCR。`OCR_LANG=chi_sim+eng` 会同时识别简体中文和英文；离线部署时请把 `chi_sim.traineddata(.gz)` 和 `eng.traineddata(.gz)` 放到服务器本地目录，并把 `OCR_LANG_PATH` 指向该目录。默认缓存目录是 `data/ocr-cache`，不要放到公开下载目录。
 
 ## 5. 构建前端
 

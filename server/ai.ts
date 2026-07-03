@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import Tesseract from "tesseract.js";
 import type { ChatMode } from "./types.js";
 
@@ -18,6 +20,11 @@ function readRequiredEnv(name: string) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`missing_${name.toLowerCase()}`);
   return value;
+}
+
+function readOptionalEnv(name: string) {
+  const value = process.env[name]?.trim();
+  return value || undefined;
 }
 
 function requestTimeout() {
@@ -247,11 +254,49 @@ export async function extractTextFromImage(dataUrl: string) {
 
 async function extractTextWithLocalOcr(dataUrl: string) {
   const image = dataUrlToBuffer(dataUrl);
-  const language = process.env.OCR_LANG?.trim() || "chi_sim+eng";
-  const result = await Tesseract.recognize(image, language);
+  const language = normalizeOcrLanguage(process.env.OCR_LANG);
+  const result = await Tesseract.recognize(image, language, localOcrOptions());
   const content = String(result.data.text ?? "").trim();
   if (!content) throw new Error("local_ocr_empty_content");
   return content;
+}
+
+function normalizeOcrLanguage(value: string | undefined) {
+  const languages = (value ?? "chi_sim+eng")
+    .split(/[,+]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return languages.length > 0 ? languages.join("+") : "chi_sim+eng";
+}
+
+function localOcrOptions() {
+  const options: Parameters<typeof Tesseract.recognize>[2] = {};
+  const langPath = readOptionalEnv("OCR_LANG_PATH");
+  const cachePath = readOptionalEnv("OCR_CACHE_PATH") ?? defaultOcrCachePath();
+  const cacheMethod = readOptionalEnv("OCR_CACHE_METHOD");
+
+  if (langPath) options.langPath = langPath;
+  if (cachePath) options.cachePath = cachePath;
+  if (cacheMethod) options.cacheMethod = normalizeOcrCacheMethod(cacheMethod);
+  if (process.env.OCR_DEBUG?.trim() === "true") {
+    options.logger = ({ status, progress }) => {
+      console.info(`local_ocr:${status}:${Math.round(progress * 100)}%`);
+    };
+  }
+
+  return options;
+}
+
+function defaultOcrCachePath() {
+  const cachePath = resolve(process.cwd(), "data", "ocr-cache");
+  mkdirSync(cachePath, { recursive: true });
+  return cachePath;
+}
+
+function normalizeOcrCacheMethod(value: string) {
+  const allowed = new Set(["write", "readOnly", "refresh", "none"]);
+  if (!allowed.has(value)) throw new Error("invalid_ocr_cache_method");
+  return value;
 }
 
 function dataUrlToBuffer(dataUrl: string) {
