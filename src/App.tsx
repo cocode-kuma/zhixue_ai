@@ -1,18 +1,23 @@
 import {
   Alert,
+  Box,
   Button,
   CssBaseline,
+  Divider,
   IconButton,
   MenuItem,
   Paper,
+  Stack,
   TextField,
   ThemeProvider,
   ToggleButton,
   ToggleButtonGroup,
+  Typography,
   createTheme
 } from "@mui/material";
 import {
   BarChart3,
+  Bell,
   BookOpen,
   CheckCircle2,
   ClipboardList,
@@ -37,7 +42,7 @@ import {
   Users,
   School
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
@@ -100,6 +105,14 @@ type ViewId =
 type ViewGroup = "常用" | "学习" | "规划" | "知识" | "管理" | "系统";
 type KnowledgeNodeView = { id: string; subject?: string; gradeBand?: string; title: string; description: string; status: string; mastery: number };
 type KnowledgeEdgeView = { id: string; fromNodeId: string; toNodeId: string; relation: string };
+type AppNotification = {
+  id: string;
+  kind: "pending" | "success" | "error";
+  title: string;
+  message: string;
+  createdAt: string;
+  read: boolean;
+};
 
 const modes: Array<{ id: StudyMode; label: string; icon: typeof Brain; tone: string }> = [
   { id: "tutor", label: "讲题", icon: BookOpenText, tone: "引导审题、拆解、提示" },
@@ -150,6 +163,8 @@ export function App() {
     input,
     loading,
     pendingTask,
+    chatLoadingByConversationId,
+    unreadConversationIds,
     error,
     messages,
     wrongQuestions,
@@ -170,6 +185,7 @@ export function App() {
     setInput,
     beginConversationWithInput,
     sendMessage,
+    markConversationRead,
     markWrongMastered,
     createKnowledgeCard,
     createStudyPlan,
@@ -177,6 +193,10 @@ export function App() {
   } = useStudyStore();
   const [ocrUploading, setOcrUploading] = useState(false);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [toast, setToast] = useState<null | { kind: "error" | "pending"; message: string; id: number }>(null);
+  const previousPendingTask = useRef<"" | "chat" | "card" | "plan" | "quiz">("");
 
   useEffect(() => {
     void loadInitialData();
@@ -187,11 +207,77 @@ export function App() {
     localStorage.setItem("zhixue-theme", theme);
   }, [theme]);
 
+  const pushNotification = useCallback((item: Omit<AppNotification, "id" | "createdAt" | "read">) => {
+    setNotifications((state) => [
+      {
+        ...item,
+        id: `notice_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        createdAt: new Date().toISOString(),
+        read: false
+      },
+      ...state
+    ].slice(0, 100));
+  }, []);
+
+  const markNotificationsRead = useCallback(() => {
+    setNotifications((state) => state.map((item) => (item.read ? item : { ...item, read: true })));
+  }, []);
+
+  useEffect(() => {
+    if (!error) return;
+    const id = Date.now();
+    setToast({ kind: "error", message: error, id });
+    pushNotification({
+      kind: "error",
+      title: "请求失败",
+      message: error
+    });
+    const timer = window.setTimeout(() => {
+      setToast((current) => (current?.id === id ? null : current));
+    }, 4600);
+    return () => window.clearTimeout(timer);
+  }, [error, pushNotification]);
+
+  useEffect(() => {
+    const previous = previousPendingTask.current;
+    if (pendingTask && pendingTask !== "chat" && previous !== pendingTask) {
+      const id = Date.now();
+      const label = pendingLabel(pendingTask);
+      setToast({ kind: "pending", message: `${label}，可继续浏览其他内容。`, id });
+      pushNotification({
+        kind: "pending",
+        title: label,
+        message: "任务已开始，完成后会继续提醒。"
+      });
+      window.setTimeout(() => {
+        setToast((current) => (current?.id === id ? null : current));
+      }, 3200);
+    }
+    if (!pendingTask && previous && previous !== "chat" && !error) {
+      pushNotification({
+        kind: "success",
+        title: `${pendingLabel(previous)}完成`,
+        message: "结果已经更新到当前工作区。"
+      });
+    }
+    previousPendingTask.current = pendingTask;
+  }, [error, pendingTask, pushNotification]);
+
+  useEffect(() => {
+    if (notificationsOpen) markNotificationsRead();
+  }, [markNotificationsRead, notifications.length, notificationsOpen]);
+
   const accuracy = useMemo(() => {
     const total = stats.solvedCount + stats.wrongCount;
     return total ? Math.round((stats.solvedCount / total) * 100) : 100;
   }, [stats.solvedCount, stats.wrongCount]);
   const currentRole = user?.role ?? "student";
+  const currentChatLoading = Boolean(conversationId && chatLoadingByConversationId[conversationId]);
+  const showChatThinking = currentChatLoading;
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter((item) => !item.read).length,
+    [notifications]
+  );
   const accessibleViews = useMemo(
     () => views.filter((item) => item.roles.includes(currentRole)),
     [currentRole]
@@ -202,30 +288,47 @@ export function App() {
         palette: {
           mode: theme,
           primary: {
-            main: "#0b57d0",
-            light: "#d3e3fd",
-            dark: "#0842a0"
+            main: theme === "dark" ? "#7dd3fc" : "#0ea5e9",
+            light: theme === "dark" ? "#082f49" : "#f0f9ff",
+            dark: theme === "dark" ? "#e0f2fe" : "#0284c7"
           },
           secondary: {
-            main: "#146c2e"
+            main: theme === "dark" ? "#6ad7c4" : "#087f74"
+          },
+          divider: theme === "dark" ? "#272a31" : "#e6e8ef",
+          action: {
+            hover: theme === "dark" ? "rgba(255,255,255,0.06)" : "rgba(14,165,233,0.07)",
+            selected: theme === "dark" ? "rgba(125,211,252,0.16)" : "rgba(14,165,233,0.11)"
           },
           background: {
-            default: theme === "dark" ? "#111318" : "#f8fafd",
-            paper: theme === "dark" ? "#1b1d22" : "#ffffff"
+            default: theme === "dark" ? "#0f172a" : "#f0f9ff",
+            paper: theme === "dark" ? "#111827" : "#ffffff"
           },
           text: {
-            primary: theme === "dark" ? "#e3e6ea" : "#202124",
-            secondary: theme === "dark" ? "#9aa7b2" : "#687682"
+            primary: theme === "dark" ? "#f8fafc" : "#171923",
+            secondary: theme === "dark" ? "#cbd5e1" : "#667085"
           }
         },
         shape: {
-          borderRadius: 18
+          borderRadius: 14
         },
         typography: {
           fontFamily:
             'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif',
+          h1: {
+            fontWeight: 760,
+            letterSpacing: 0
+          },
+          h2: {
+            fontWeight: 740,
+            letterSpacing: 0
+          },
+          h3: {
+            fontWeight: 720,
+            letterSpacing: 0
+          },
           button: {
-            fontWeight: 800,
+            fontWeight: 700,
             letterSpacing: 0,
             textTransform: "none"
           }
@@ -234,16 +337,42 @@ export function App() {
           MuiButton: {
             styleOverrides: {
               root: {
-                borderRadius: 999,
+                borderRadius: 12,
                 minHeight: 40,
-                boxShadow: "none"
+                boxShadow: "none",
+                "&.MuiButton-containedPrimary": {
+                  border: `1px solid ${theme === "dark" ? "#38bdf8" : "#7dd3fc"}`,
+                  backgroundColor: theme === "dark" ? "#0c4a6e" : "#e0f2fe",
+                  backgroundImage: "none",
+                  color: theme === "dark" ? "#e0f2fe" : "#0369a1",
+                  boxShadow: "none",
+                  "&:hover": {
+                    borderColor: theme === "dark" ? "#7dd3fc" : "#38bdf8",
+                    backgroundColor: theme === "dark" ? "#075985" : "#bae6fd",
+                    backgroundImage: "none",
+                    boxShadow: "none"
+                  },
+                  "&:disabled": {
+                    borderColor: theme === "dark" ? "#30343d" : "#d9deea",
+                    backgroundColor: theme === "dark" ? "#1d2027" : "#eef2f7",
+                    color: theme === "dark" ? "#727986" : "#98a2b3"
+                  }
+                },
               }
             }
           },
           MuiPaper: {
             styleOverrides: {
               root: {
-                backgroundImage: "none"
+                backgroundImage: "none",
+                borderRadius: 14
+              }
+            }
+          },
+          MuiIconButton: {
+            styleOverrides: {
+              root: {
+                borderRadius: 12
               }
             }
           },
@@ -255,14 +384,14 @@ export function App() {
           MuiOutlinedInput: {
             styleOverrides: {
               root: {
-                borderRadius: 16,
-                backgroundColor: theme === "dark" ? "#202329" : "#ffffff"
+                borderRadius: 12,
+                backgroundColor: theme === "dark" ? "#1d2027" : "#ffffff"
               },
               input: {
-                color: theme === "dark" ? "#e3e6ea" : "#202124"
+                color: theme === "dark" ? "#f2f3f5" : "#171923"
               },
               notchedOutline: {
-                borderColor: theme === "dark" ? "#44474f" : "#d7dce2"
+                borderColor: theme === "dark" ? "#30343d" : "#e1e4eb"
               }
             }
           }
@@ -312,7 +441,7 @@ export function App() {
     const current = Date.now();
     if (current - lastManualSendAt.current < 500) return;
     lastManualSendAt.current = current;
-    if (!loading && input.trim()) void sendMessage();
+    if (!currentChatLoading && input.trim()) void sendMessage();
   };
   const startTutorWithText = (text: string, nextMode: StudyMode = "tutor") => {
     void beginConversationWithInput(nextMode, text);
@@ -331,12 +460,12 @@ export function App() {
   };
 
   return renderWithTheme(
-    <main className={mobileRailOpen ? "chat-app rail-open" : "chat-app"}>
-      <aside className="rail">
-        <div className="rail-brand">
+    <Box component="main" className={mobileRailOpen ? "chat-app rail-open" : "chat-app"}>
+      <Paper component="aside" className="rail" elevation={0}>
+        <Stack className="rail-brand" direction="row" sx={{ alignItems: "center" }}>
           <Sparkles aria-hidden="true" />
           <span>智学AI</span>
-        </div>
+        </Stack>
 
         <Button
           className="theme-toggle"
@@ -353,9 +482,9 @@ export function App() {
           <span>新对话</span>
         </Button>
 
-        <nav className="app-nav" aria-label="功能导航">
+        <Box component="nav" className="app-nav" aria-label="功能导航">
           {navGroups.map((group) => (
-            <section className="nav-group" key={group} aria-label={group}>
+            <Box component="section" className="nav-group" key={group} aria-label={group}>
               <div className="nav-group-title">{group}</div>
               {accessibleViews.filter((item) => item.group === group).map((item) => {
                 const Icon = item.icon;
@@ -375,11 +504,13 @@ export function App() {
                   </Button>
                 );
               })}
-            </section>
+            </Box>
           ))}
-        </nav>
+        </Box>
 
-        <div className="mode-tabs" aria-label="学习模式">
+        <Divider className="rail-divider" />
+
+        <Stack className="mode-tabs" aria-label="学习模式">
           {modes.map((item) => {
             const Icon = item.icon;
             return (
@@ -400,9 +531,9 @@ export function App() {
               </Button>
             );
           })}
-        </div>
+        </Stack>
 
-        <section className="history-section">
+        <Paper component="section" className="history-section" elevation={0}>
           <div className="section-title">
             <History aria-hidden="true" />
             <span>历史记录</span>
@@ -412,13 +543,22 @@ export function App() {
               <p className="muted-text">开始一次新学习后会保存到这里。</p>
             ) : (
               conversations.map((item) => (
-                <div className={conversationId === item.id ? "conversation-row active" : "conversation-row"} key={item.id}>
+                <div
+                  className={[
+                    "conversation-row",
+                    conversationId === item.id ? "active" : "",
+                    unreadConversationIds[item.id] ? "unread" : "",
+                    chatLoadingByConversationId[item.id] ? "busy" : ""
+                  ].filter(Boolean).join(" ")}
+                  key={item.id}
+                >
                   <Button
                     type="button"
                     variant="text"
                     onClick={() => {
                       setView("tutor");
                       setMobileRailOpen(false);
+                      markConversationRead(item.id);
                       void selectConversation(item.id);
                     }}
                   >
@@ -437,71 +577,83 @@ export function App() {
               ))
             )}
           </div>
-        </section>
+        </Paper>
 
-        <section className="mini-stats">
+        <Box component="section" className="mini-stats">
           <Metric label="学习" value={`${stats.learnedMinutes}分`} />
           <Metric label="完成" value={`${stats.solvedCount}题`} />
           <Metric label="错题" value={`${stats.wrongCount}题`} />
           <Metric label="正确率" value={`${accuracy}%`} />
-        </section>
+        </Box>
 
         <Button className="logout-button" type="button" variant="text" onClick={logout}>
           <LogOut aria-hidden="true" />
           退出登录
         </Button>
-      </aside>
+      </Paper>
       <div className="mobile-rail-backdrop" onClick={() => setMobileRailOpen(false)} />
+      <AppToast toast={toast} onClose={() => setToast(null)} />
 
-      <section className="chat-main">
-        <header className="chat-topbar">
+      <Paper component="section" className="chat-main" elevation={0}>
+        <Stack component="header" className="chat-topbar" direction="row" sx={{ alignItems: "center" }}>
           <IconButton className="mobile-menu-button" type="button" aria-label="打开菜单" onClick={() => setMobileRailOpen(true)}>
             <Menu aria-hidden="true" />
           </IconButton>
-          <div>
-            <p>{pageSubtitle}</p>
-            <h1>{pageTitle}</h1>
-          </div>
-          <div className="topbar-badge">
-            <ShieldCheck aria-hidden="true" />
-            <span>真实AI流式引导</span>
-          </div>
-        </header>
+          <Box>
+            <Typography component="p">{pageSubtitle}</Typography>
+            <Typography component="h1" variant="h1">{pageTitle}</Typography>
+          </Box>
+          <Stack className="topbar-actions" direction="row" sx={{ alignItems: "center" }}>
+            <NotificationCenter
+              notifications={notifications}
+              open={notificationsOpen}
+              unreadCount={unreadNotificationCount}
+              onToggle={() => {
+                setNotificationsOpen((value) => !value);
+                markNotificationsRead();
+              }}
+            />
+            <Stack className="topbar-badge" direction="row" sx={{ alignItems: "center" }}>
+              <ShieldCheck aria-hidden="true" />
+              <span>真实AI流式引导</span>
+            </Stack>
+          </Stack>
+        </Stack>
 
         {view === "tutor" ? (
           <>
-            <section className="message-canvas" data-testid="message-list">
+            <Box component="section" className="message-canvas" data-testid="message-list">
               {messages.length === 1 && !conversationId ? <WelcomePanel onPrompt={(prompt) => startTutorWithText(prompt, "tutor")} /> : null}
 
               {messages.map((message) => (
-                <article className={`bubble ${message.role}`} key={message.id}>
+                <Box component="article" className={`bubble ${message.role}`} key={message.id}>
                   <div className="bubble-avatar">{message.role === "assistant" ? "AI" : user.name.slice(0, 1)}</div>
-                  <div className="bubble-content">
+                  <Paper className="bubble-content" elevation={0}>
                     <div className="bubble-name">{message.role === "assistant" ? "智学AI" : user.name}</div>
                     <MarkdownView>{message.content || " "}</MarkdownView>
-                  </div>
-                </article>
+                  </Paper>
+                </Box>
               ))}
 
-              {loading ? (
-                <article className="bubble assistant">
+              {showChatThinking ? (
+                <Box component="article" className="bubble assistant">
                   <div className="bubble-avatar">AI</div>
-                  <div className="bubble-content thinking">
+                  <Paper className="bubble-content thinking" elevation={0}>
                     <span />
                     <span />
                     <span />
-                  </div>
-                </article>
+                  </Paper>
+                </Box>
               ) : null}
-            </section>
+            </Box>
 
-            {error ? <div className="snackbar">{error}</div> : null}
-
-            <form
+            <Paper
+              component="form"
               className="prompt-box"
+              elevation={0}
               onSubmit={(event) => {
                 event.preventDefault();
-                void sendMessage();
+                if (!currentChatLoading && input.trim()) void sendMessage();
               }}
             >
               <textarea
@@ -509,7 +661,7 @@ export function App() {
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
-                  if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && input.trim() && !loading) {
+                  if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && input.trim() && !currentChatLoading) {
                     event.preventDefault();
                     handleSendRequest();
                   }
@@ -532,7 +684,7 @@ export function App() {
                 className="send-button"
                 type="button"
                 aria-label="发送"
-                disabled={loading || !input.trim()}
+                disabled={currentChatLoading || !input.trim()}
                 onPointerDown={(event) => {
                   if (event.pointerType !== "mouse") {
                     event.preventDefault();
@@ -549,7 +701,7 @@ export function App() {
               >
                 <Send aria-hidden="true" />
               </IconButton>
-            </form>
+            </Paper>
           </>
         ) : (
           <LearningWorkspace
@@ -573,10 +725,10 @@ export function App() {
             }}
           />
         )}
-      </section>
+      </Paper>
 
-      <aside className="study-panel">
-        <section className="side-card">
+      <Paper component="aside" className="study-panel" elevation={0}>
+        <Paper component="section" className="side-card" elevation={0}>
           <div className="section-title">
             <BookOpen aria-hidden="true" />
             <span>今日复习</span>
@@ -586,56 +738,125 @@ export function App() {
           ) : (
             <div className="wrong-stack">
               {wrongQuestions.slice(0, 5).map((item) => (
-                <article className="wrong-item" key={item.id}>
+                <Paper component="article" className="wrong-item" elevation={0} key={item.id}>
                   <strong>{item.title}</strong>
                   <span>{item.knowledgePoint}</span>
                   <Button type="button" variant="outlined" onClick={() => void markWrongMastered(item.id)}>
                     <CheckCircle2 aria-hidden="true" />
                     已掌握
                   </Button>
-                </article>
+                </Paper>
               ))}
             </div>
           )}
-        </section>
+        </Paper>
 
-        <section className="side-card">
+        <Paper component="section" className="side-card" elevation={0}>
           <div className="section-title">
             <Lightbulb aria-hidden="true" />
             <span>学习建议</span>
           </div>
           <p className="muted-text">每次只推进一步。先说条件，再说目标，最后再考虑公式或方法。</p>
-        </section>
-      </aside>
-    </main>
+        </Paper>
+      </Paper>
+    </Box>
   );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <Paper className="metric-card" elevation={0}>
       <strong>{value}</strong>
       <span>{label}</span>
-    </div>
+    </Paper>
   );
 }
 
 function WelcomePanel({ onPrompt }: { onPrompt: (prompt: string) => void }) {
   const prompts = ["拍照或粘贴一道题", "讲一个没听懂的概念", "按我的错题做复习计划"];
   return (
-    <section className="welcome-panel">
-            <Sparkles aria-hidden="true" />
+    <Paper component="section" className="welcome-panel" elevation={0}>
+      <Sparkles aria-hidden="true" />
       <h2>今天想学什么？</h2>
       <p>我会边问边提示，尽量让你自己想出来。</p>
-      <div>
+      <Stack direction="row" sx={{ flexWrap: "wrap", justifyContent: "center" }}>
         {prompts.map((prompt) => (
           <Button type="button" key={prompt} variant="outlined" onClick={() => onPrompt(prompt)}>
             {prompt}
           </Button>
         ))}
-      </div>
-    </section>
+      </Stack>
+    </Paper>
   );
+}
+
+function NotificationCenter({
+  notifications,
+  open,
+  unreadCount,
+  onToggle
+}: {
+  notifications: AppNotification[];
+  open: boolean;
+  unreadCount: number;
+  onToggle: () => void;
+}) {
+  return (
+    <Box className="notification-center">
+      <IconButton className="notification-trigger" type="button" aria-label="通知" onClick={onToggle}>
+        <Bell aria-hidden="true" />
+        {unreadCount > 0 ? <span className="notification-count">{Math.min(99, unreadCount)}</span> : null}
+      </IconButton>
+      {open ? (
+        <Paper className="notification-menu" elevation={0}>
+          <div className="notification-menu-header">
+            <strong>通知</strong>
+            <span>{notifications.length} / 100</span>
+          </div>
+          {notifications.length ? (
+            <div className="notification-list">
+              {notifications.map((item) => (
+                <article className={item.read ? `notification-item ${item.kind}` : `notification-item ${item.kind} unread`} key={item.id}>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <time>{formatNoticeTime(item.createdAt)}</time>
+                  </div>
+                  <p>{item.message}</p>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="notification-empty">暂无通知。</p>
+          )}
+        </Paper>
+      ) : null}
+    </Box>
+  );
+}
+
+function AppToast({
+  toast,
+  onClose
+}: {
+  toast: null | { kind: "error" | "pending"; message: string };
+  onClose: () => void;
+}) {
+  if (!toast) return null;
+  return (
+    <Paper className={`app-toast ${toast.kind}`} elevation={0} role="status">
+      <span className={toast.kind === "pending" ? "progress-dot" : "toast-dot"} />
+      <strong>{toast.message}</strong>
+      <IconButton type="button" aria-label="关闭提示" onClick={onClose}>
+        ×
+      </IconButton>
+    </Paper>
+  );
+}
+
+function formatNoticeTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
 function LearningWorkspace({
@@ -737,17 +958,9 @@ function LearningWorkspace({
 
   return (
     <section className="learning-page">
-      {pendingTask && pendingTask !== "chat" ? (
-        <div className="progress-banner">
-          <span className="progress-dot" />
-          <strong>{pendingLabel(pendingTask)}</strong>
-          <span>AI 正在生成内容，请不要重复点击。</span>
-        </div>
-      ) : null}
-
       {view === "dashboard" ? (
         <>
-          <section className="dashboard-hero">
+          <Paper component="section" className="dashboard-hero" elevation={0}>
             <div>
               <p>今日任务</p>
               <h2>先诊断卡点，再进入 AI 辅导</h2>
@@ -756,7 +969,7 @@ function LearningWorkspace({
             <Button type="button" variant="contained" onClick={onGoTutor}>
               开始学习
             </Button>
-          </section>
+          </Paper>
           <div className="dashboard-grid">
             <FeatureCard title="AI辅导" text="流式讲题，不直接给最终答案。" action="去讲题" onClick={onGoTutor} />
             <FeatureCard title="错题复习" text={`当前待复习 ${wrongQuestions.length} 题。`} />
@@ -764,7 +977,7 @@ function LearningWorkspace({
             <FeatureCard title="知识卡片" text={`已保存 ${knowledgeCards.length} 张卡片。`} />
           </div>
           <div className="dashboard-grid secondary-grid">
-            <section className="feature-card">
+            <Paper component="section" className="feature-card" elevation={0}>
               <h3>班级公告</h3>
               {announcements.length ? (
                 announcements.slice(0, 3).map((item) => (
@@ -775,8 +988,8 @@ function LearningWorkspace({
               ) : (
                 <p>暂无老师公告。</p>
               )}
-            </section>
-            <section className="feature-card">
+            </Paper>
+            <Paper component="section" className="feature-card" elevation={0}>
               <h3>学习成就</h3>
               {achievements.length ? (
                 achievements.slice(0, 4).map((item) => (
@@ -787,7 +1000,7 @@ function LearningWorkspace({
               ) : (
                 <p>继续完成学习任务，成就会自动点亮。</p>
               )}
-            </section>
+            </Paper>
           </div>
         </>
       ) : null}
@@ -923,8 +1136,6 @@ function LearningWorkspace({
       {view === "teacher" ? <TeacherPanel /> : null}
       {view === "admin" ? <AdminPanel /> : null}
       {view === "settings" ? <SettingsPanel user={user} /> : null}
-
-      {error ? <div className="snackbar static">{error}</div> : null}
     </section>
   );
 }
@@ -2093,11 +2304,11 @@ function pendingLabel(task: "" | "chat" | "card" | "plan" | "quiz") {
 
 function FeatureCard({ title, text, action, onClick }: { title: string; text: string; action?: string; onClick?: () => void }) {
   return (
-    <article className="feature-card">
+    <Paper component="article" className="feature-card" elevation={0}>
       <h3>{title}</h3>
       <p>{text}</p>
       {action ? <Button type="button" variant="contained" onClick={onClick}>{action}</Button> : null}
-    </article>
+    </Paper>
   );
 }
 

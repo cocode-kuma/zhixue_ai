@@ -54,6 +54,10 @@ interface StudyState {
   drafts: Record<string, string>;
   loading: boolean;
   pendingTask: "" | "chat" | "card" | "plan" | "quiz";
+  chatLoadingConversationId: string;
+  chatLoadingRequestId: string;
+  chatLoadingByConversationId: Record<string, string>;
+  unreadConversationIds: Record<string, string>;
   error: string;
   messages: ChatMessage[];
   wrongQuestions: WrongQuestion[];
@@ -89,6 +93,7 @@ interface StudyState {
   setInput: (input: string) => void;
   refreshConversations: () => Promise<void>;
   sendMessage: () => Promise<void>;
+  markConversationRead: (id: string) => void;
   markWrongMastered: (id: string) => void;
   addManualWrong: () => void;
   createKnowledgeCard: (concept: string) => Promise<void>;
@@ -108,6 +113,13 @@ function now() {
 
 function id(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function removeRecordKey<T>(record: Record<string, T>, key: string) {
+  if (!key || !(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
 }
 
 function modeTitle(mode: StudyMode) {
@@ -137,6 +149,10 @@ export const useStudyStore = create<StudyState>((set, get) => ({
   drafts: {},
   loading: false,
   pendingTask: "",
+  chatLoadingConversationId: "",
+  chatLoadingRequestId: "",
+  chatLoadingByConversationId: {},
+  unreadConversationIds: {},
   error: "",
   messages: [welcomeMessage],
   wrongQuestions: [],
@@ -178,6 +194,10 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       user: null,
       authReady: true,
       pendingTask: "",
+      chatLoadingConversationId: "",
+      chatLoadingRequestId: "",
+      chatLoadingByConversationId: {},
+      unreadConversationIds: {},
       conversationId: "",
       conversations: [],
       view: "dashboard",
@@ -262,6 +282,7 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       mode: data.conversation.mode,
       messages: data.messages.length ? data.messages : [welcomeMessage],
       input: state.drafts[data.conversation.id] ?? "",
+      unreadConversationIds: removeRecordKey(state.unreadConversationIds, data.conversation.id),
       error: ""
     }));
   },
@@ -273,7 +294,9 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       return {
         conversations,
         conversationId: removedActive ? "" : state.conversationId,
-        messages: removedActive ? [welcomeMessage] : state.messages
+        messages: removedActive ? [welcomeMessage] : state.messages,
+        chatLoadingByConversationId: removeRecordKey(state.chatLoadingByConversationId, idToRemove),
+        unreadConversationIds: removeRecordKey(state.unreadConversationIds, idToRemove)
       };
     });
   },
@@ -290,9 +313,26 @@ export const useStudyStore = create<StudyState>((set, get) => ({
     set({ conversations: result.conversations });
   },
   sendMessage: async () => {
-    const { input, mode, messages, conversationId } = get();
+    const { input, mode } = get();
     const trimmed = input.trim();
     if (!trimmed) return;
+    const requestId = id("chat_request");
+
+    let targetConversationId = get().conversationId;
+    if (!targetConversationId) {
+      const data = await createConversation(mode);
+      targetConversationId = data.conversation.id;
+      set((state) => ({
+        conversationId: data.conversation.id,
+        conversations: [data.conversation, ...state.conversations],
+        drafts: {
+          ...state.drafts,
+          [data.conversation.id]: state.drafts[`mode:${mode}`] ?? ""
+        }
+      }));
+    }
+
+    if (get().chatLoadingByConversationId[targetConversationId]) return;
 
     const userMessage: ChatMessage = {
       id: id("user"),
@@ -303,15 +343,20 @@ export const useStudyStore = create<StudyState>((set, get) => ({
 
     set((state) => ({
       input: "",
-      loading: true,
-      pendingTask: "chat",
+      chatLoadingConversationId: targetConversationId,
+      chatLoadingRequestId: requestId,
+      chatLoadingByConversationId: {
+        ...state.chatLoadingByConversationId,
+        [targetConversationId]: requestId
+      },
       error: "",
-      drafts: { ...state.drafts, [conversationId || `mode:${mode}`]: "" },
-      messages: [...messages, userMessage]
+      drafts: { ...state.drafts, [targetConversationId]: "" },
+      messages: state.conversationId === targetConversationId ? [...state.messages, userMessage] : state.messages
     }));
 
+    const assistantId = id("assistant_stream");
+
     try {
-      const assistantId = id("assistant_stream");
       set((state) => ({
         messages: [
           ...state.messages,
@@ -326,13 +371,26 @@ export const useStudyStore = create<StudyState>((set, get) => ({
 
       const streamResult: { current: StreamDoneResult | null } = { current: null };
 
-      await streamChatMessage(mode, trimmed, conversationId, {
-        onMeta: (data) => set({ conversationId: data.conversationId }),
+      await streamChatMessage(mode, trimmed, targetConversationId, {
+        onMeta: (data) =>
+          set((state) => ({
+            chatLoadingConversationId: state.chatLoadingRequestId === requestId ? data.conversationId : state.chatLoadingConversationId,
+            chatLoadingByConversationId:
+              data.conversationId === targetConversationId
+                ? state.chatLoadingByConversationId
+                : {
+                    ...state.chatLoadingByConversationId,
+                    [data.conversationId]: requestId
+                  }
+          })),
         onDelta: (delta) =>
           set((state) => ({
-            messages: state.messages.map((item) =>
-              item.id === assistantId ? { ...item, content: item.content + delta } : item
-            )
+            messages:
+              state.chatLoadingByConversationId[targetConversationId] === requestId && state.conversationId === targetConversationId
+                ? state.messages.map((item) =>
+                    item.id === assistantId ? { ...item, content: item.content + delta } : item
+                  )
+                : state.messages
           })),
         onDone: (data) => {
           streamResult.current = data;
@@ -346,9 +404,12 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       const result = streamResult.current;
 
       set((state) => ({
-        loading: false,
-        pendingTask: "",
-        conversationId: result.conversationId,
+        chatLoadingConversationId: state.chatLoadingRequestId === requestId ? "" : state.chatLoadingConversationId,
+        chatLoadingRequestId: state.chatLoadingRequestId === requestId ? "" : state.chatLoadingRequestId,
+        chatLoadingByConversationId: removeRecordKey(
+          removeRecordKey(state.chatLoadingByConversationId, targetConversationId),
+          result.conversationId
+        ),
         conversations:
           state.conversations.length > 0 && state.conversations.some((item) => item.id === result.conversationId)
             ? state.conversations.map((item) =>
@@ -366,9 +427,18 @@ export const useStudyStore = create<StudyState>((set, get) => ({
                 },
                 ...state.conversations
               ],
-        messages: state.messages.map((item) =>
-          item.id === assistantId ? { ...result.message, content: result.message.content || item.content } : item
-        ),
+        messages:
+          state.conversationId === result.conversationId
+            ? state.messages.some((item) => item.id === assistantId)
+              ? state.messages.map((item) =>
+                  item.id === assistantId ? { ...result.message, content: result.message.content || item.content } : item
+                )
+              : [...state.messages, result.message]
+            : state.messages,
+        unreadConversationIds:
+          state.conversationId === result.conversationId
+            ? removeRecordKey(state.unreadConversationIds, result.conversationId)
+            : { ...state.unreadConversationIds, [result.conversationId]: now() },
         wrongQuestions: result.wrongQuestion ? [result.wrongQuestion, ...state.wrongQuestions] : state.wrongQuestions,
         stats: result.stats
       }));
@@ -376,13 +446,21 @@ export const useStudyStore = create<StudyState>((set, get) => ({
         void get().refreshConversations();
       }, 1400);
     } catch (error) {
-      set({
-        loading: false,
-        pendingTask: "",
-        error: error instanceof Error ? error.message : "发送失败，请稍后再试"
-      });
+      set((state) => ({
+        chatLoadingConversationId: "",
+        chatLoadingRequestId: "",
+        chatLoadingByConversationId: removeRecordKey(state.chatLoadingByConversationId, targetConversationId),
+        error: error instanceof Error ? error.message : "发送失败，请稍后再试",
+        messages: state.messages.some((item) => item.id === assistantId)
+          ? state.messages.filter((item) => item.id !== assistantId)
+          : state.messages
+      }));
     }
   },
+  markConversationRead: (idToRead) =>
+    set((state) => ({
+      unreadConversationIds: removeRecordKey(state.unreadConversationIds, idToRead)
+    })),
   markWrongMastered: async (idToRemove) => {
     const result = await masterWrongQuestion(idToRemove);
     set((state) => ({
