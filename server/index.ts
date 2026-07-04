@@ -1341,7 +1341,10 @@ app.post("/api/quizzes/:id/submit", requireAuth, async (req: AuthedRequest, res)
   }
   try {
     const content = JSON.parse(quiz.content);
-    const report = (await gradeLearningWork("批改AI测验", { quiz: content, answers })) as Record<string, any>;
+    const report = normalizeQuizWrongQuestions(
+      (await gradeLearningWork("批改AI测验", { quiz: content, answers })) as Record<string, any>,
+      content
+    );
     const score = Math.max(0, Math.min(100, Number(report.score ?? 0)));
     db.prepare("UPDATE quiz_sessions SET report = ?, score = ? WHERE id = ? AND user_id = ?").run(
       JSON.stringify(report),
@@ -1610,13 +1613,35 @@ function persistGradingWrongQuestions(userId: string, sourceId: string, report: 
     "INSERT INTO learning_records (id, user_id, event_type, knowledge_point, minutes, correct, wrong, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   );
   for (const item of wrongQuestions.slice(0, 10)) {
-    const title = String(item.title ?? sourceId).slice(0, 80);
+    const title = String(item.title ?? sourceId).slice(0, 160);
     const reason = String(item.reason ?? "批改发现薄弱点").slice(0, 120);
     const knowledgePoint = String(item.knowledge_point ?? "待AI归类").slice(0, 40);
     insertWrong.run(newId("wrong"), userId, title, reason, knowledgePoint, "active", 1, 0, nowIso(), reviewDue(1));
     insertRecord.run(newId("record"), userId, "grading_wrong", knowledgePoint, 0, 0, 1, nowIso());
     updateMasteryByKnowledgePoint(userId, knowledgePoint, -8);
   }
+}
+
+function normalizeQuizWrongQuestions(report: Record<string, any>, quizContent: Record<string, any>) {
+  const questions = Array.isArray(quizContent.questions) ? quizContent.questions : [];
+  const wrongQuestions = Array.isArray(report.wrong_questions) ? report.wrong_questions : [];
+  if (!questions.length || !wrongQuestions.length) return report;
+
+  return {
+    ...report,
+    wrong_questions: wrongQuestions.map((item: Record<string, any>, index: number) => {
+      const rawIndex = Number(item.question_index ?? item.index ?? item.number);
+      const questionIndex = Number.isInteger(rawIndex) && rawIndex >= 0 ? rawIndex : index;
+      const matchedQuestion = questions[questionIndex] ?? questions[index];
+      const questionText = String(matchedQuestion?.question ?? "").trim();
+      if (!questionText) return item;
+
+      return {
+        ...item,
+        title: questionText.slice(0, 160)
+      };
+    })
+  };
 }
 
 function evaluateAchievements(userId: string) {

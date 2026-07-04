@@ -314,7 +314,15 @@ export async function gradeLearningWork(task: string, payload: unknown) {
       "wrong_questions每项包含title, reason, knowledge_point。",
       "批改要具体、温和，不要羞辱学生。"
     ].join("\n"),
-    JSON.stringify({ task, payload })
+    JSON.stringify({
+      task,
+      payload,
+      grading_contract: {
+        wrong_questions_title: "Use the original question text or a concise question summary. Do not use the student's wrong answer as the title.",
+        wrong_questions_question_index: "When possible, include question_index as a zero-based number.",
+        wrong_questions_order: "If question_index is omitted, keep wrong_questions in the same order as the quiz questions."
+      }
+    })
   );
 }
 

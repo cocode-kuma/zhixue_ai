@@ -938,6 +938,7 @@ function LearningWorkspace({
   const [selfWeakness, setSelfWeakness] = useState("");
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
   const [quizReport, setQuizReport] = useState<null | { score: number; summary?: string; suggestions?: string[]; wrong_points?: string[] }>(null);
+  const [gradingQuiz, setGradingQuiz] = useState(false);
   const [achievements, setAchievements] = useState<Array<{ code: string; title: string; description: string; unlockedAt: string }>>([]);
   const [announcements, setAnnouncements] = useState<Array<{ id: string; title: string; content: string; className: string; createdAt: string }>>([]);
 
@@ -1039,11 +1040,18 @@ function LearningWorkspace({
                   </details>
                 </article>
               ))}
-              <Button type="button" variant="contained" onClick={async () => {
+              <Button type="button" variant="contained" disabled={gradingQuiz || !generatedQuiz.id} onClick={async () => {
                 if (!generatedQuiz.id) return;
-                const result = await submitQuiz(generatedQuiz.id, quizAnswers);
-                setQuizReport(result.report);
-              }}>提交批改</Button>
+                setGradingQuiz(true);
+                setQuizReport(null);
+                try {
+                  const result = await submitQuiz(generatedQuiz.id, quizAnswers);
+                  setQuizReport(result.report);
+                } finally {
+                  setGradingQuiz(false);
+                }
+              }}>{gradingQuiz ? "AI批改中..." : "提交批改"}</Button>
+              {gradingQuiz ? <p className="muted-text">AI 正在批改测验，请稍等一会。</p> : null}
               {quizReport ? <GradingReportView report={quizReport} /> : null}
             </div>
           ) : null}
