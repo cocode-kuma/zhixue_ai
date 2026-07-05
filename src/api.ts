@@ -40,10 +40,92 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 async function readableError(response: Response) {
   try {
     const body = (await response.json()) as { error?: string; message?: string };
-    return body.message ?? body.error ?? "请求失败";
+    return friendlyErrorMessage(body.message ?? body.error, response.status);
   } catch {
-    return "请求失败";
+    return friendlyErrorMessage(undefined, response.status);
   }
+}
+
+const friendlyErrors: Record<string, string> = {
+  unauthorized: "登录已过期，请重新登录。",
+  forbidden: "当前账号没有权限执行这个操作。",
+  invalid_credentials: "账号或密码不正确，请检查后再试。",
+  account_suspended: "这个账号已被停用，请联系管理员。",
+  invalid_register_payload: "请填写有效邮箱，密码至少 8 位。",
+  email_exists: "这个邮箱或账号已经被注册。",
+  user_not_found: "没有找到这个用户。",
+  name_required: "请填写昵称。",
+  message_required: "请输入要发送的内容。",
+  conversation_not_found: "没有找到这条对话，可能已被删除。",
+  title_required: "请填写题目内容。",
+  answer_required: "请先填写答案。",
+  not_found: "没有找到对应内容。",
+  wrong_question_not_found: "没有找到这道错题。",
+  wrong_review_grading_failed: "错题批改暂时失败，请稍后再试。",
+  concept_required: "请填写知识点。",
+  ai_api_unavailable: "AI 服务暂时不可用，请稍后再试。",
+  ai_api_empty_content: "AI 暂时没有返回内容，请稍后再试。",
+  learning_api_empty_content: "学习分析暂时没有返回内容，请稍后再试。",
+  invalid_image_data: "图片格式不正确，请上传 PNG、JPG 或 WebP。",
+  image_too_large: "图片太大了，请换一张更小的图片。",
+  ocr_no_text_detected: "没有识别到清晰文字，请换一张更清楚的图片。",
+  ocr_config_invalid: "OCR 配置异常，请联系管理员。",
+  ocr_failed: "OCR 识别暂时不可用，请稍后再试。",
+  ocr_empty_content: "OCR 暂时没有识别到内容，请换一张更清楚的图片。",
+  local_ocr_empty_content: "本地 OCR 暂时没有识别到内容，请换一张更清楚的图片。",
+  invalid_ocr_cache_method: "OCR 缓存配置异常，请联系管理员。",
+  invalid_json_response: "AI 返回格式异常，请稍后再试。",
+  knowledge_node_payload_required: "请填写完整的知识点信息。",
+  knowledge_node_not_found: "没有找到这个知识点。",
+  knowledge_edge_payload_required: "请选择有效的知识点关系。",
+  invalid_guardian_email: "请填写有效的家长邮箱。",
+  class_name_required: "请填写班级名称。",
+  class_not_found: "没有找到这个班级。",
+  student_not_found: "没有找到这个学生账号。",
+  assignment_payload_required: "请填写完整的作业信息。",
+  assignment_not_found: "没有找到这份作业。",
+  announcement_payload_required: "请填写公告标题和内容。",
+  cannot_demote_self: "不能取消自己的管理员权限。",
+  last_admin_required: "至少需要保留一个可用管理员。",
+  password_too_short: "新密码至少需要 8 位。",
+  profile_required: "请填写账号和姓名。",
+  cannot_suspend_self: "不能停用自己的账号。",
+  students_required: "请先选择要加入班级的用户。",
+  teacher_not_found: "请选择有效的老师或管理员作为班主任。",
+  class_payload_required: "请填写班级名称、科目和负责老师。",
+  guardian_link_payload_required: "请选择学生并填写有效的家长邮箱。",
+  ai_grading_failed: "AI 批改暂时失败，请稍后再试。",
+  practice_grading_failed: "AI 批改暂时失败，请稍后再试。",
+  quiz_not_found: "没有找到这次测验。",
+  variant_generation_failed: "变式题生成失败，请稍后再试。",
+  practice_not_found: "没有找到这次练习。",
+  goal_title_required: "请填写学习目标。",
+  goal_generation_failed: "学习目标生成失败，请稍后再试。"
+};
+
+function friendlyErrorMessage(raw?: string, status?: number) {
+  const value = raw?.trim();
+  if (!value) return statusErrorMessage(status);
+  if (friendlyErrors[value]) return friendlyErrors[value];
+  if (value.startsWith("ai_api_error:")) return "AI 服务暂时不可用，请稍后再试。";
+  if (value.startsWith("learning_api_error:")) return "学习分析服务暂时不可用，请稍后再试。";
+  if (value.startsWith("ocr_api_error:")) return "OCR 识别暂时不可用，请稍后再试。";
+  if (value.startsWith("ai_stream_error:")) return "AI 流式输出暂时中断，请稍后再试。";
+  if (/[\u4e00-\u9fff]/.test(value)) return value;
+  if (/^[a-z][a-z0-9_:-]*$/i.test(value)) return statusErrorMessage(status);
+  return value;
+}
+
+function statusErrorMessage(status?: number) {
+  if (status === 400) return "请求内容有误，请检查后再试。";
+  if (status === 401) return "登录已过期，请重新登录。";
+  if (status === 403) return "当前账号没有权限执行这个操作。";
+  if (status === 404) return "没有找到对应内容。";
+  if (status === 409) return "内容已存在，请换一个再试。";
+  if (status === 413) return "上传内容太大了。";
+  if (status === 429) return "操作太频繁了，请稍后再试。";
+  if (status && status >= 500) return "服务暂时不可用，请稍后再试。";
+  return "请求失败，请稍后再试。";
 }
 
 export async function register(payload: { email: string; password: string; name: string; grade: string; role: UserProfile["role"] }) {
@@ -169,8 +251,12 @@ export async function streamChatMessage(
     body: JSON.stringify({ mode, message, conversationId })
   });
 
-  if (!response.ok || !response.body) {
-    throw new Error("AI流式服务暂时不可用");
+  if (!response.ok) {
+    throw new Error(await readableError(response));
+  }
+
+  if (!response.body) {
+    throw new Error(friendlyErrorMessage("ai_stream_error"));
   }
 
   const reader = response.body.getReader();
@@ -204,7 +290,8 @@ export async function streamChatMessage(
         );
       }
       if (parsed.event === "error") {
-        throw new Error((parsed.data as { message?: string }).message ?? "AI流式服务暂时不可用");
+        const data = parsed.data as { error?: string; message?: string };
+        throw new Error(friendlyErrorMessage(data.message ?? data.error ?? "ai_stream_error"));
       }
     }
   }

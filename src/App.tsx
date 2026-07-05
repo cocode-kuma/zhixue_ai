@@ -3047,9 +3047,10 @@ function AuthScreen({
           ) : null}
           <TextField
             fullWidth
-            label="邮箱"
-            type="email"
-            placeholder="输入邮箱"
+            label={isRegister ? "邮箱" : "邮箱 / 管理员账号"}
+            type={isRegister ? "email" : "text"}
+            placeholder={isRegister ? "输入邮箱" : "普通账号输入邮箱，管理员输入账号"}
+            helperText={isRegister ? "" : "登录不是填写昵称；管理员账号可直接输入账号名。"}
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             variant="outlined"
