@@ -2352,6 +2352,251 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+/* Layui-style school admin skin. Scoped so the learning workspace keeps its SaaS look. */
+.admin-portal.layui-layout-admin {
+  --admin-green-950: #062e25;
+  --admin-green-900: #073b2f;
+  --admin-green-800: #0b4a3a;
+  --admin-green-700: #0f5f49;
+  --admin-green-600: #15785c;
+  --admin-green-100: #dff3ea;
+  --admin-green-50: #f3fbf7;
+  --admin-border: #d9e5df;
+  --admin-line: #edf2ef;
+  --admin-bg: #f2f6f4;
+  --admin-card: #ffffff;
+  --admin-text: #1f2d27;
+  --admin-muted: #6b7d74;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 0;
+  background: var(--admin-bg);
+  padding: 0;
+}
+
+:root[data-theme="dark"] .admin-portal.layui-layout-admin {
+  --admin-bg: #0f1714;
+  --admin-card: #16211d;
+  --admin-border: #263a32;
+  --admin-line: #21332c;
+  --admin-text: #e9f4ef;
+  --admin-muted: #9db3aa;
+}
+
+.admin-sidebar.layui-side.MuiPaper-root {
+  top: 0;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(180deg, var(--admin-green-950), var(--admin-green-900));
+  box-shadow: none;
+  padding: 0;
+}
+
+.admin-brand {
+  min-height: 58px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0 18px;
+}
+
+.admin-brand svg {
+  width: 30px;
+  height: 30px;
+  border-color: rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #dff3ea;
+  padding: 6px;
+}
+
+.admin-brand strong {
+  color: #f7fffb;
+  font-size: 16px;
+}
+
+.admin-brand span {
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.admin-nav.layui-nav-tree {
+  gap: 0;
+  padding: 10px 0;
+}
+
+.admin-nav-item.layui-nav-item.MuiButton-root {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-areas:
+    "icon label"
+    "icon desc";
+  column-gap: 10px;
+  min-height: 48px;
+  border: 0;
+  border-left: 4px solid transparent;
+  border-radius: 0;
+  color: rgba(255, 255, 255, 0.76);
+  padding: 7px 18px 7px 16px;
+}
+
+.admin-nav-item.layui-nav-item svg {
+  grid-area: icon;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+}
+
+.admin-nav-item.layui-nav-item span {
+  grid-area: label;
+  color: inherit;
+  font-size: 14px;
+}
+
+.admin-nav-item.layui-nav-item small {
+  grid-area: desc;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.admin-nav-item.layui-this.MuiButton-root,
+.admin-nav-item.layui-nav-item.MuiButton-root:hover {
+  border-left-color: #5fd0a5;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.admin-main {
+  gap: 14px;
+  min-height: 100vh;
+  padding: 14px;
+}
+
+.admin-topbar.layui-header.MuiPaper-root {
+  min-height: 58px;
+  border: 1px solid var(--admin-border);
+  border-radius: 2px;
+  background: var(--admin-card);
+  box-shadow: none;
+  padding: 10px 14px;
+}
+
+.admin-topbar h1 {
+  color: var(--admin-text);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.admin-topbar .MuiTypography-overline {
+  color: var(--admin-green-600);
+  font-size: 11px;
+}
+
+.admin-user-chip.MuiPaper-root {
+  border-color: var(--admin-border);
+  border-radius: 2px;
+  background: var(--admin-green-50);
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .admin-user-chip.MuiPaper-root {
+  background: #102820;
+}
+
+.admin-panel-card.layui-card.MuiPaper-root,
+.admin-subcard.layui-card.MuiPaper-root,
+.feature-card.layui-card.MuiPaper-root {
+  border: 1px solid var(--admin-border);
+  border-radius: 2px;
+  background: var(--admin-card);
+  box-shadow: none;
+  padding: 14px;
+}
+
+.admin-panel-card.layui-card h2 {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  margin: -14px -14px 10px;
+  border-bottom: 1px solid var(--admin-line);
+  background: color-mix(in srgb, var(--admin-card) 92%, var(--admin-green-50));
+  color: var(--admin-text);
+  padding: 0 14px;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.admin-panel-card p,
+.admin-list span,
+.admin-activity-list span,
+.admin-activity-list p {
+  color: var(--admin-muted);
+}
+
+.admin-list > div,
+.admin-activity-list > div,
+.admin-user-row {
+  border-color: var(--admin-line);
+  border-radius: 0;
+  background: var(--admin-card);
+}
+
+.admin-list > div {
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.admin-user-table {
+  border: 1px solid var(--admin-line);
+  gap: 0;
+}
+
+.admin-user-row {
+  border-width: 0 0 1px;
+  padding: 10px;
+}
+
+.admin-user-row:last-child {
+  border-bottom: 0;
+}
+
+.admin-select-user strong,
+.admin-list strong,
+.admin-activity-list strong {
+  color: var(--admin-text);
+}
+
+.admin-subcard h4 {
+  color: var(--admin-text);
+  font-weight: 650;
+}
+
+.admin-portal .MuiButton-contained,
+.admin-portal .layui-btn-primary-action.MuiButton-root {
+  border-color: var(--admin-green-600);
+  border-radius: 2px;
+  background: var(--admin-green-600);
+  color: #ffffff;
+}
+
+.admin-portal .MuiButton-contained:hover,
+.admin-portal .layui-btn-primary-action.MuiButton-root:hover {
+  border-color: var(--admin-green-700);
+  background: var(--admin-green-700);
+  color: #ffffff;
+}
+
+.admin-portal .MuiButton-outlined {
+  border-color: var(--admin-border);
+  border-radius: 2px;
+  color: var(--admin-green-700);
+}
+
+.admin-portal .MuiOutlinedInput-root {
+  border-radius: 2px;
+}
+
+.admin-message.layui-anim.MuiAlert-root {
+  border: 1px solid color-mix(in srgb, var(--admin-green-600) 18%, var(--admin-border));
+  border-radius: 2px;
+}
+
 .admin-panel {
   display: grid;
   gap: 18px;

@@ -328,8 +328,8 @@ export function AdminPortal({
   };
 
   return (
-    <Box component="main" className="admin-portal">
-      <Paper component="aside" className="admin-sidebar" elevation={0}>
+    <Box component="main" className="admin-portal layui-layout layui-layout-admin">
+      <Paper component="aside" className="admin-sidebar layui-side layui-bg-green" elevation={0}>
         <Stack className="admin-brand" direction="row" sx={{ alignItems: "center" }}>
           <ShieldCheck aria-hidden="true" />
           <div>
@@ -338,12 +338,12 @@ export function AdminPortal({
           </div>
         </Stack>
         <Divider />
-        <Box component="nav" className="admin-nav" aria-label="管理员导航">
+        <Box component="nav" className="admin-nav layui-nav layui-nav-tree" aria-label="管理员导航">
           {adminSections.map((item) => {
             const Icon = item.icon;
             return (
               <Button
-                className={section === item.id ? "admin-nav-item active" : "admin-nav-item"}
+                className={section === item.id ? "admin-nav-item layui-nav-item layui-this active" : "admin-nav-item layui-nav-item"}
                 key={item.id}
                 type="button"
                 variant="text"
@@ -359,7 +359,7 @@ export function AdminPortal({
       </Paper>
 
       <Box component="section" className="admin-main">
-        <Paper component="header" className="admin-topbar" elevation={0}>
+        <Paper component="header" className="admin-topbar layui-header" elevation={0}>
           <div>
             <Typography variant="overline">Administrator Workspace</Typography>
             <h1>{adminSections.find((item) => item.id === section)?.label ?? "校级管理"}</h1>
@@ -381,7 +381,7 @@ export function AdminPortal({
           </Stack>
         </Paper>
 
-        {message ? <Alert className="admin-message" severity={message.includes("失败") || message.includes("至少") ? "warning" : "success"}>{message}</Alert> : null}
+        {message ? <Alert className="admin-message layui-anim layui-anim-upbit" severity={message.includes("失败") || message.includes("至少") ? "warning" : "success"}>{message}</Alert> : null}
 
         {section === "overview" ? (
           <AdminOverview data={data} loading={loading} />
@@ -464,7 +464,7 @@ function AdminOverview({ data, loading }: { data: AdminDashboardData | null; loa
         <Metric label="累计学习分钟" value={String(data.totals.totalMinutes)} />
         <Metric label="已交作业" value={String(data.totals.submittedAssignments)} />
       </div>
-      <Paper component="section" className="admin-panel-card" elevation={0}>
+      <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
         <h2>学习趋势</h2>
         {data.trends.length ? (
           <div className="heatmap-list">
@@ -483,7 +483,7 @@ function AdminOverview({ data, loading }: { data: AdminDashboardData | null; loa
         <AdminListCard title="班级平均掌握度" items={data.classMastery.map((item) => ({ label: `${item.className} · ${item.subject}`, value: `${item.averageMastery ?? 0}%` }))} empty="暂无班级数据。" />
         <AdminListCard title="最近用户" items={data.recentUsers.map((item) => ({ label: `${item.name || item.email} · ${roleLabel(item.role)}`, value: shortDate(item.createdAt) }))} empty="暂无用户。" />
       </div>
-      <Paper component="section" className="admin-panel-card" elevation={0}>
+      <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
         <h2>最近学习动态</h2>
         <div className="admin-activity-list">
           {data.recentActivity.length ? data.recentActivity.map((item) => (
@@ -545,7 +545,7 @@ function AdminAccounts({
   onChangeStatus: (id: string, status: "active" | "suspended") => Promise<void>;
 }) {
   return (
-    <Paper component="section" className="admin-panel-card" elevation={0}>
+    <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
       <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ alignItems: { xs: "stretch", md: "center" }, justifyContent: "space-between" }}>
         <Box>
           <h2>账号与权限</h2>
@@ -570,7 +570,7 @@ function AdminAccounts({
             <MenuItem key={item.id} value={item.id}>{item.name} · {item.subject} · {item.teacherName || item.teacherEmail}</MenuItem>
           ))}
         </TextField>
-        <Button type="button" variant="contained" disabled={!targetClassId || !selectedUserIds.length || working === "class-add"} onClick={onAddSelected}>
+        <Button className="layui-btn-primary-action" type="button" variant="contained" disabled={!targetClassId || !selectedUserIds.length || working === "class-add"} onClick={onAddSelected}>
           加入所选用户
         </Button>
         <Button type="button" variant="outlined" onClick={onApplyFilter}>应用筛选</Button>
@@ -659,10 +659,10 @@ function AdminClasses({
 }) {
   return (
     <Stack spacing={2.5}>
-      <Paper component="section" className="admin-panel-card" elevation={0}>
+      <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
         <h2>班级治理</h2>
         <div className="admin-management-grid">
-          <Paper component="section" className="admin-subcard" elevation={0}>
+          <Paper component="section" className="admin-subcard layui-card" elevation={0}>
             <h4>{classDraft.id ? "编辑班级" : "校级创建班级"}</h4>
             <TextField label="班级名称" size="small" value={classDraft.name} onChange={(event) => onClassDraftChange((state) => ({ ...state, name: event.target.value }))} />
             <TextField label="科目" size="small" value={classDraft.subject} onChange={(event) => onClassDraftChange((state) => ({ ...state, subject: event.target.value }))} />
@@ -673,13 +673,13 @@ function AdminClasses({
               ))}
             </TextField>
             <div className="button-row">
-              <Button type="button" variant="contained" disabled={working === "class-save"} onClick={onSaveClass}>
+              <Button className="layui-btn-primary-action" type="button" variant="contained" disabled={working === "class-save"} onClick={onSaveClass}>
                 {classDraft.id ? "保存班级" : "创建班级"}
               </Button>
               {classDraft.id ? <Button type="button" variant="outlined" onClick={() => onClassDraftChange({ id: "", name: "", subject: "数学", teacherId: classDraft.teacherId })}>取消编辑</Button> : null}
             </div>
           </Paper>
-          <Paper component="section" className="admin-subcard" elevation={0}>
+          <Paper component="section" className="admin-subcard layui-card" elevation={0}>
             <h4>批量创建账号并入班</h4>
             <TextField select label="目标班级" size="small" value={targetClassId} onChange={(event) => onTargetClassChange(event.target.value)}>
               <MenuItem value="">不选择班级</MenuItem>
@@ -695,13 +695,13 @@ function AdminClasses({
               multiline
               minRows={5}
             />
-            <Button type="button" variant="contained" disabled={working === "bulk"} onClick={onCreateBulkUsers}>
+            <Button className="layui-btn-primary-action" type="button" variant="contained" disabled={working === "bulk"} onClick={onCreateBulkUsers}>
               {working === "bulk" ? "创建中..." : "批量创建"}
             </Button>
           </Paper>
         </div>
       </Paper>
-      <Paper component="section" className="admin-panel-card" elevation={0}>
+      <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ alignItems: { xs: "stretch", md: "center" }, justifyContent: "space-between" }}>
           <Box>
             <h2>全校班级</h2>
@@ -728,7 +728,7 @@ function AdminClasses({
           {classes.length === 0 ? <p>暂无班级。</p> : null}
         </div>
         {classStudents.length ? (
-          <Paper component="section" className="admin-subcard admin-roster" elevation={0}>
+          <Paper component="section" className="admin-subcard admin-roster layui-card" elevation={0}>
             <h4>当前班级花名册</h4>
             <div className="admin-list">
               {classStudents.map((student) => (
@@ -762,7 +762,7 @@ function AdminGuardians({
   onBind: () => void;
 }) {
   return (
-    <Paper component="section" className="admin-panel-card admin-narrow-panel" elevation={0}>
+    <Paper component="section" className="admin-panel-card admin-narrow-panel layui-card" elevation={0}>
       <h2>家校绑定</h2>
       <p>管理员可为学生绑定家长邮箱，家长使用同邮箱账号登录后查看学习报告。</p>
       <TextField select label="学生" size="small" value={draft.studentId} onChange={(event) => onDraftChange((state) => ({ ...state, studentId: event.target.value }))}>
@@ -772,14 +772,14 @@ function AdminGuardians({
         ))}
       </TextField>
       <TextField label="家长邮箱" size="small" value={draft.guardianEmail} onChange={(event) => onDraftChange((state) => ({ ...state, guardianEmail: event.target.value }))} />
-      <Button type="button" variant="contained" disabled={working === "guardian"} onClick={onBind}>绑定家长</Button>
+      <Button className="layui-btn-primary-action" type="button" variant="contained" disabled={working === "guardian"} onClick={onBind}>绑定家长</Button>
     </Paper>
   );
 }
 
 function AdminAudit({ logs, onRefresh }: { logs: AdminAuditLog[]; onRefresh: () => void }) {
   return (
-    <Paper component="section" className="admin-panel-card" elevation={0}>
+    <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
       <Stack direction="row" spacing={2} sx={{ alignItems: "center", justifyContent: "space-between" }}>
         <Box>
           <h2>管理员审计日志</h2>
@@ -803,7 +803,7 @@ function AdminAudit({ logs, onRefresh }: { logs: AdminAuditLog[]; onRefresh: () 
 
 function AdminListCard({ title, items, empty }: { title: string; items: Array<{ label: string; value: string }>; empty: string }) {
   return (
-    <Paper component="section" className="feature-card" elevation={0}>
+    <Paper component="section" className="feature-card layui-card" elevation={0}>
       <h3>{title}</h3>
       <div className="admin-list">
         {items.length ? items.map((item) => (
