@@ -48,6 +48,7 @@ interface StudyState {
     | "parent"
     | "teacher"
     | "admin"
+    | "about"
     | "settings";
   mode: StudyMode;
   input: string;

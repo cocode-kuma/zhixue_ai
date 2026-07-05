@@ -22,6 +22,8 @@ dotenv.config();
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
 type UserRole = "student" | "teacher" | "parent" | "admin";
+const defaultAdminAccount = process.env.ZHIXUE_ADMIN_ACCOUNT ?? "cocode";
+const defaultAdminPassword = process.env.ZHIXUE_ADMIN_PASSWORD ?? "cocodekuma123";
 
 const allowedOrigins = parseOrigins(process.env.APP_ORIGINS);
 
@@ -119,6 +121,43 @@ function toClientUser<T extends { grade: string; role?: string }>(user: T | unde
   return user ? { ...user, role: normalizeRole(user.role, user.grade) } : user;
 }
 
+function adminCount() {
+  const result = db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status <> 'suspended'").get() as { count: number };
+  return result.count;
+}
+
+function recordAdminAction(adminId: string, action: string, targetType: string, targetId: string, detail: unknown = "") {
+  db.prepare("INSERT INTO admin_audit_logs (id, admin_id, action, target_type, target_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    newId("audit"),
+    adminId,
+    action,
+    targetType,
+    targetId,
+    typeof detail === "string" ? detail : JSON.stringify(detail),
+    nowIso()
+  );
+}
+
+async function ensureDefaultAdmin() {
+  const account = defaultAdminAccount.trim().toLowerCase();
+  if (!account) return;
+
+  const existing = db
+    .prepare("SELECT id, role FROM users WHERE email = ?")
+    .get(account) as { id: string; role?: string } | undefined;
+
+  if (existing) {
+    if (normalizeRole(existing.role) !== "admin") {
+      db.prepare("UPDATE users SET role = 'admin', grade = ? WHERE id = ?").run("校级管理员", existing.id);
+    }
+    return;
+  }
+
+  db.prepare(
+    "INSERT INTO users (id, email, password_hash, name, grade, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run(newId("admin"), account, await hashPassword(defaultAdminPassword), "校级管理员", "校领导", "admin", nowIso());
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "zhixue-ai-api" });
 });
@@ -178,11 +217,15 @@ app.post("/api/auth/login", async (req, res) => {
   const email = String(req.body.email ?? "").trim().toLowerCase();
   const password = String(req.body.password ?? "");
   const user = db
-    .prepare("SELECT id, email, password_hash, name, grade, role FROM users WHERE email = ?")
-    .get(email) as { id: string; email: string; password_hash: string; name: string; grade: string; role?: string } | undefined;
+    .prepare("SELECT id, email, password_hash, name, grade, role, status FROM users WHERE email = ?")
+    .get(email) as { id: string; email: string; password_hash: string; name: string; grade: string; role?: string; status?: string } | undefined;
 
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     res.status(401).json({ error: "invalid_credentials" });
+    return;
+  }
+  if (user.status === "suspended") {
+    res.status(403).json({ error: "account_suspended" });
     return;
   }
 
@@ -1236,7 +1279,7 @@ app.get("/api/achievements", requireAuth, (req: AuthedRequest, res) => {
 });
 
 app.get("/api/admin/dashboard", requireAuth, (_req: AuthedRequest, res) => {
-  if (!requireRole(_req, res, ["teacher", "admin"])) return;
+  if (!requireRole(_req, res, ["admin"])) return;
   const totals = db
     .prepare(
       `SELECT
@@ -1274,7 +1317,351 @@ app.get("/api/admin/dashboard", requireAuth, (_req: AuthedRequest, res) => {
        ORDER BY averageMastery DESC`
     )
     .all();
-  res.json({ totals, trends, hotKnowledge, classMastery });
+  const roleBreakdown = db
+    .prepare(
+      `SELECT role, COUNT(*) AS count
+       FROM users
+       GROUP BY role
+       ORDER BY count DESC`
+    )
+    .all();
+  const recentUsers = db
+    .prepare(
+      `SELECT id, email, name, grade, role, created_at AS createdAt
+       FROM users
+       ORDER BY created_at DESC
+       LIMIT 8`
+    )
+    .all();
+  const recentActivity = db
+    .prepare(
+      `SELECT lr.event_type AS eventType, lr.knowledge_point AS knowledgePoint, lr.minutes, lr.correct, lr.wrong, lr.created_at AS createdAt,
+              u.name AS userName, u.email AS userEmail
+       FROM learning_records lr
+       JOIN users u ON u.id = lr.user_id
+       ORDER BY lr.created_at DESC
+       LIMIT 10`
+    )
+    .all();
+  res.json({ totals, trends, hotKnowledge, classMastery, roleBreakdown, recentUsers, recentActivity });
+});
+
+app.get("/api/admin/users", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const q = String(req.query.q ?? "").trim().toLowerCase();
+  const role = normalizeRole(req.query.role);
+  const params: unknown[] = [];
+  const where: string[] = [];
+  if (q) {
+    where.push("(LOWER(u.email) LIKE ? OR LOWER(u.name) LIKE ? OR LOWER(u.grade) LIKE ?)");
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  if (String(req.query.role ?? "").trim()) {
+    where.push("u.role = ?");
+    params.push(role);
+  }
+  const users = db
+    .prepare(
+      `SELECT u.id, u.email, u.name, u.grade, u.role, u.status, u.created_at AS createdAt,
+              COUNT(cs.class_id) AS classCount,
+              COALESCE(GROUP_CONCAT(c.name, '、'), '') AS classes
+       FROM users u
+       LEFT JOIN class_students cs ON cs.student_id = u.id
+       LEFT JOIN classes c ON c.id = cs.class_id
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       GROUP BY u.id
+       ORDER BY u.created_at DESC
+       LIMIT 200`
+    )
+    .all(...params);
+  res.json({ users });
+});
+
+app.get("/api/admin/classes", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const classes = db
+    .prepare(
+      `SELECT c.id, c.name, c.subject, c.created_at AS createdAt,
+              u.id AS teacherId, u.name AS teacherName, u.email AS teacherEmail,
+              COUNT(cs.student_id) AS studentCount
+       FROM classes c
+       JOIN users u ON u.id = c.teacher_id
+       LEFT JOIN class_students cs ON cs.class_id = c.id
+       GROUP BY c.id
+       ORDER BY c.created_at DESC`
+    )
+    .all();
+  res.json({ classes });
+});
+
+app.post("/api/admin/users/:id/role", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const nextRole = normalizeRole(req.body.role);
+  const user = db.prepare("SELECT id, role FROM users WHERE id = ?").get(req.params.id) as { id: string; role: string } | undefined;
+  if (!user) {
+    res.status(404).json({ error: "user_not_found" });
+    return;
+  }
+  if (user.id === req.user!.id && nextRole !== "admin") {
+    res.status(400).json({ error: "cannot_demote_self" });
+    return;
+  }
+  if (normalizeRole(user.role) === "admin" && nextRole !== "admin" && adminCount() <= 1) {
+    res.status(400).json({ error: "last_admin_required" });
+    return;
+  }
+  db.prepare("UPDATE users SET role = ? WHERE id = ?").run(nextRole, user.id);
+  recordAdminAction(req.user!.id, "user.role.update", "user", user.id, { role: nextRole });
+  res.json({ ok: true, role: nextRole });
+});
+
+app.post("/api/admin/users/:id/password", requireAuth, async (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const password = String(req.body.password ?? "");
+  if (password.length < 8) {
+    res.status(400).json({ error: "password_too_short" });
+    return;
+  }
+  const user = db.prepare("SELECT id FROM users WHERE id = ?").get(req.params.id);
+  if (!user) {
+    res.status(404).json({ error: "user_not_found" });
+    return;
+  }
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(await hashPassword(password), req.params.id);
+  recordAdminAction(req.user!.id, "user.password.reset", "user", String(req.params.id));
+  res.json({ ok: true });
+});
+
+app.patch("/api/admin/users/:id/profile", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const name = String(req.body.name ?? "").trim().slice(0, 30);
+  const grade = String(req.body.grade ?? "").trim().slice(0, 30);
+  const email = String(req.body.email ?? "").trim().toLowerCase();
+  if (!name || !email) {
+    res.status(400).json({ error: "profile_required" });
+    return;
+  }
+  const user = db.prepare("SELECT id FROM users WHERE id = ?").get(req.params.id);
+  if (!user) {
+    res.status(404).json({ error: "user_not_found" });
+    return;
+  }
+  const exists = db.prepare("SELECT id FROM users WHERE email = ? AND id <> ?").get(email, req.params.id);
+  if (exists) {
+    res.status(409).json({ error: "email_exists" });
+    return;
+  }
+  db.prepare("UPDATE users SET email = ?, name = ?, grade = ? WHERE id = ?").run(email, name, grade, req.params.id);
+  recordAdminAction(req.user!.id, "user.profile.update", "user", String(req.params.id), { email, name, grade });
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/users/:id/status", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const status = String(req.body.status ?? "active") === "suspended" ? "suspended" : "active";
+  const user = db.prepare("SELECT id, role, status FROM users WHERE id = ?").get(req.params.id) as { id: string; role: string; status?: string } | undefined;
+  if (!user) {
+    res.status(404).json({ error: "user_not_found" });
+    return;
+  }
+  if (user.id === req.user!.id && status === "suspended") {
+    res.status(400).json({ error: "cannot_suspend_self" });
+    return;
+  }
+  if (normalizeRole(user.role) === "admin" && status === "suspended" && adminCount() <= 1) {
+    res.status(400).json({ error: "last_admin_required" });
+    return;
+  }
+  db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, user.id);
+  recordAdminAction(req.user!.id, "user.status.update", "user", user.id, { status });
+  res.json({ ok: true, status });
+});
+
+app.post("/api/admin/classes/:id/students", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const klass = db.prepare("SELECT id FROM classes WHERE id = ?").get(req.params.id);
+  if (!klass) {
+    res.status(404).json({ error: "class_not_found" });
+    return;
+  }
+  const rawUserIds: unknown[] = Array.isArray(req.body.userIds) ? req.body.userIds : [];
+  const rawAccounts: unknown[] = Array.isArray(req.body.accounts) ? req.body.accounts : [];
+  const userIds = rawUserIds.map((item) => String(item).trim()).filter(Boolean);
+  const accounts = rawAccounts.map((item) => String(item).trim().toLowerCase()).filter(Boolean);
+  if (!userIds.length && !accounts.length) {
+    res.status(400).json({ error: "students_required" });
+    return;
+  }
+  const foundById = userIds.length
+    ? db.prepare(`SELECT id FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`).all(...userIds) as Array<{ id: string }>
+    : [];
+  const foundByAccount = accounts.length
+    ? db.prepare(`SELECT id FROM users WHERE email IN (${accounts.map(() => "?").join(",")})`).all(...accounts) as Array<{ id: string }>
+    : [];
+  const ids = Array.from(new Set([...foundById.map((item) => item.id), ...foundByAccount.map((item) => item.id)]));
+  const insert = db.prepare("INSERT OR IGNORE INTO class_students (class_id, student_id, created_at) VALUES (?, ?, ?)");
+  const now = nowIso();
+  let added = 0;
+  for (const id of ids) {
+    const result = insert.run(req.params.id, id, now);
+    added += result.changes;
+  }
+  recordAdminAction(req.user!.id, "class.students.force_add", "class", String(req.params.id), { matched: ids.length, added });
+  res.json({ ok: true, matched: ids.length, added });
+});
+
+app.post("/api/admin/bulk-users", requireAuth, async (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const rows = Array.isArray(req.body.users) ? req.body.users.slice(0, 200) : [];
+  const classId = String(req.body.classId ?? "").trim();
+  const klass = classId ? db.prepare("SELECT id FROM classes WHERE id = ?").get(classId) : null;
+  if (classId && !klass) {
+    res.status(404).json({ error: "class_not_found" });
+    return;
+  }
+  const created: Array<{ id: string; email: string; name: string; role: UserRole }> = [];
+  const skipped: Array<{ email: string; reason: string }> = [];
+  const insertUser = db.prepare("INSERT INTO users (id, email, password_hash, name, grade, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  const insertClassStudent = db.prepare("INSERT OR IGNORE INTO class_students (class_id, student_id, created_at) VALUES (?, ?, ?)");
+
+  for (const row of rows) {
+    const email = String(row.email ?? "").trim().toLowerCase();
+    const password = String(row.password ?? "");
+    const name = String(row.name ?? email).trim().slice(0, 30) || email;
+    const grade = String(row.grade ?? "").trim().slice(0, 30);
+    const role = normalizePublicRegistrationRole(row.role, grade);
+    if (!email || password.length < 8) {
+      skipped.push({ email: email || "(空账号)", reason: "账号为空或密码少于 8 位" });
+      continue;
+    }
+    const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+    if (exists) {
+      skipped.push({ email, reason: "账号已存在" });
+      continue;
+    }
+    const id = newId("user");
+    insertUser.run(id, email, await hashPassword(password), name, grade, role, nowIso());
+    if (classId && role === "student") insertClassStudent.run(classId, id, nowIso());
+    created.push({ id, email, name, role });
+  }
+
+  recordAdminAction(req.user!.id, "users.bulk_create", classId ? "class" : "user", classId || "bulk", { created: created.length, skipped: skipped.length });
+  res.json({ created, skipped, createdCount: created.length, skippedCount: skipped.length });
+});
+
+app.post("/api/admin/classes", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const name = String(req.body.name ?? "").trim();
+  const subject = String(req.body.subject ?? "数学").trim();
+  const teacherId = String(req.body.teacherId ?? "").trim();
+  if (!name || !teacherId) {
+    res.status(400).json({ error: "class_payload_required" });
+    return;
+  }
+  const teacher = db.prepare("SELECT id FROM users WHERE id = ? AND role IN ('teacher', 'admin')").get(teacherId);
+  if (!teacher) {
+    res.status(404).json({ error: "teacher_not_found" });
+    return;
+  }
+  const klass = { id: newId("class"), teacherId, name, subject, createdAt: nowIso() };
+  db.prepare("INSERT INTO classes (id, teacher_id, name, subject, created_at) VALUES (?, ?, ?, ?, ?)").run(
+    klass.id,
+    klass.teacherId,
+    klass.name,
+    klass.subject,
+    klass.createdAt
+  );
+  recordAdminAction(req.user!.id, "class.create", "class", klass.id, klass);
+  res.json({ class: klass });
+});
+
+app.patch("/api/admin/classes/:id", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const name = String(req.body.name ?? "").trim();
+  const subject = String(req.body.subject ?? "").trim();
+  const teacherId = String(req.body.teacherId ?? "").trim();
+  if (!name || !subject || !teacherId) {
+    res.status(400).json({ error: "class_payload_required" });
+    return;
+  }
+  const teacher = db.prepare("SELECT id FROM users WHERE id = ? AND role IN ('teacher', 'admin')").get(teacherId);
+  if (!teacher) {
+    res.status(404).json({ error: "teacher_not_found" });
+    return;
+  }
+  const result = db.prepare("UPDATE classes SET name = ?, subject = ?, teacher_id = ? WHERE id = ?").run(name, subject, teacherId, req.params.id);
+  if (!result.changes) {
+    res.status(404).json({ error: "class_not_found" });
+    return;
+  }
+  recordAdminAction(req.user!.id, "class.update", "class", String(req.params.id), { name, subject, teacherId });
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/classes/:id/students", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const klass = db.prepare("SELECT id, name, subject FROM classes WHERE id = ?").get(req.params.id);
+  if (!klass) {
+    res.status(404).json({ error: "class_not_found" });
+    return;
+  }
+  const students = db
+    .prepare(
+      `SELECT u.id, u.email, u.name, u.grade, u.role, u.status, cs.created_at AS joinedAt
+       FROM class_students cs
+       JOIN users u ON u.id = cs.student_id
+       WHERE cs.class_id = ?
+       ORDER BY cs.created_at DESC`
+    )
+    .all(req.params.id);
+  res.json({ class: klass, students });
+});
+
+app.delete("/api/admin/classes/:id/students/:userId", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const result = db.prepare("DELETE FROM class_students WHERE class_id = ? AND student_id = ?").run(req.params.id, req.params.userId);
+  recordAdminAction(req.user!.id, "class.student.remove", "class", String(req.params.id), { userId: String(req.params.userId), removed: result.changes });
+  res.json({ ok: true, removed: result.changes });
+});
+
+app.post("/api/admin/guardian-links", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const studentId = String(req.body.studentId ?? "").trim();
+  const guardianEmail = String(req.body.guardianEmail ?? "").trim().toLowerCase();
+  if (!studentId || !guardianEmail.includes("@")) {
+    res.status(400).json({ error: "guardian_link_payload_required" });
+    return;
+  }
+  const student = db.prepare("SELECT id FROM users WHERE id = ?").get(studentId);
+  if (!student) {
+    res.status(404).json({ error: "student_not_found" });
+    return;
+  }
+  const link = { id: newId("guardian"), studentId, guardianEmail, status: "active", createdAt: nowIso() };
+  db.prepare("INSERT INTO guardian_links (id, student_id, guardian_email, status, created_at) VALUES (?, ?, ?, ?, ?)").run(
+    link.id,
+    link.studentId,
+    link.guardianEmail,
+    link.status,
+    link.createdAt
+  );
+  recordAdminAction(req.user!.id, "guardian.link.create", "student", studentId, { guardianEmail });
+  res.json({ link });
+});
+
+app.get("/api/admin/audit-logs", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const logs = db
+    .prepare(
+      `SELECT l.id, l.action, l.target_type AS targetType, l.target_id AS targetId, l.detail, l.created_at AS createdAt,
+              u.name AS adminName, u.email AS adminEmail
+       FROM admin_audit_logs l
+       JOIN users u ON u.id = l.admin_id
+       ORDER BY l.created_at DESC
+       LIMIT 80`
+    )
+    .all();
+  res.json({ logs });
 });
 
 app.get("/api/assignments", requireAuth, (req: AuthedRequest, res) => {
@@ -1668,6 +2055,13 @@ function evaluateAchievements(userId: string) {
     .all(userId);
 }
 
-app.listen(port, "127.0.0.1", () => {
-  console.log(`zhixue-ai api listening on http://127.0.0.1:${port}`);
-});
+ensureDefaultAdmin()
+  .then(() => {
+    app.listen(port, "127.0.0.1", () => {
+      console.log(`zhixue-ai api listening on http://127.0.0.1:${port}`);
+    });
+  })
+  .catch((error) => {
+    console.error("failed to prepare default admin", error);
+    process.exit(1);
+  });

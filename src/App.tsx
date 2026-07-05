@@ -49,6 +49,9 @@ import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import {
   addStudentToClass,
+  bulkCreateAdminUsers,
+  createAdminClass,
+  createAdminGuardianLink,
   createAnnouncement,
   createAssignment,
   createClass,
@@ -67,7 +70,11 @@ import {
   loadKnowledgeMap,
   loadAchievements,
   loadAnnouncements,
+  loadAdminClasses,
+  loadAdminAuditLogs,
+  loadAdminClassStudents,
   loadGoals,
+  loadAdminUsers,
   loadReports,
   loadStudentAssignments,
   loadTeacherClasses,
@@ -76,6 +83,13 @@ import {
   submitAdaptivePractice,
   submitQuiz,
   submitWrongQuestionReview,
+  forceUsersIntoClass,
+  removeAdminClassStudent,
+  resetAdminUserPassword,
+  updateAdminClass,
+  updateAdminUserProfile,
+  updateAdminUserRole,
+  updateAdminUserStatus,
   updateProfile,
   updateGoalProgress,
   updateAssignment,
@@ -101,6 +115,7 @@ type ViewId =
   | "parent"
   | "teacher"
   | "admin"
+  | "about"
   | "settings";
 type ViewGroup = "常用" | "学习" | "规划" | "知识" | "管理" | "系统";
 type KnowledgeNodeView = { id: string; subject?: string; gradeBand?: string; title: string; description: string; status: string; mastery: number };
@@ -140,11 +155,35 @@ const views: Array<{
   { id: "map", label: "知识地图", icon: Network, group: "知识", roles: ["student", "teacher"] },
   { id: "parent", label: "家长端", icon: Users, group: "管理", roles: ["parent", "admin"] },
   { id: "teacher", label: "老师端", icon: School, group: "管理", roles: ["teacher", "admin"] },
-  { id: "admin", label: "数据", icon: BarChart3, group: "管理", roles: ["teacher", "admin"] },
+  { id: "admin", label: "校级管理", icon: ShieldCheck, group: "管理", roles: ["admin"] },
+  { id: "about", label: "关于", icon: Sparkles, group: "系统", roles: ["student", "teacher", "parent", "admin"] },
   { id: "settings", label: "设置", icon: Settings, group: "系统", roles: ["student", "teacher", "parent", "admin"] }
 ] as const;
 
 const navGroups: ViewGroup[] = ["常用", "学习", "规划", "知识", "管理", "系统"];
+const APP_VERSION = "26.2.4";
+const ABOUT_README = `# 智学AI
+
+智学AI 是一套面向学生、老师、家长与校级管理者的 AI 学习 SaaS。它不是简单的聊天工具，而是围绕「辅导、练习、批改、复习、管理」形成完整闭环。
+
+## 核心能力
+
+- AI 引导式讲题与概念学习，支持 Markdown 与 LaTeX 数学公式
+- 错题本、错题复习、错题导出与变式练习
+- AI 测验生成、提交批改、薄弱点沉淀
+- 学习计划、学习目标、知识卡片和成就系统
+- 老师端班级、作业、公告、提交报告管理
+- 家长端学习报告与学生绑定
+- 校级管理员账号、用户治理、班级治理、批量建号、权限分配、审计日志
+- OCR 拍照识题、知识地图、深色模式和移动端适配
+
+## 技术栈
+
+React · TypeScript · Vite · Material UI · Zustand · Express · SQLite · OpenAI-compatible API · Tesseract.js
+
+## 部署说明
+
+生产环境建议通过 PM2 托管 API 服务，Nginx 托管前端静态资源并反向代理 \`/api\`。管理员账号由部署种子或数据库维护，不开放公开注册。`;
 
 export function App() {
   const [theme, setTheme] = useState<"light" | "dark">(() =>
@@ -739,10 +778,9 @@ export function App() {
             <div className="wrong-stack">
               {wrongQuestions.slice(0, 5).map((item) => (
                 <Paper component="article" className="wrong-item" elevation={0} key={item.id}>
-                  <strong>{item.title}</strong>
+                  <div className="wrong-title"><MarkdownView>{item.title}</MarkdownView></div>
                   <span>{item.knowledgePoint}</span>
-                  <Button type="button" variant="outlined" onClick={() => void markWrongMastered(item.id)}>
-                    <CheckCircle2 aria-hidden="true" />
+                  <Button type="button" variant="outlined" size="small" startIcon={<CheckCircle2 aria-hidden="true" />} onClick={() => void markWrongMastered(item.id)}>
                     已掌握
                   </Button>
                 </Paper>
@@ -892,6 +930,7 @@ function LearningWorkspace({
     | "parent"
     | "teacher"
     | "admin"
+    | "about"
     | "settings";
   user: { id: string; email: string; name: string; grade: string; avatarUrl?: string };
   stats: { learnedMinutes: number; solvedCount: number; wrongCount: number; streakDays: number };
@@ -1143,6 +1182,7 @@ function LearningWorkspace({
       {view === "parent" ? <ParentPanel /> : null}
       {view === "teacher" ? <TeacherPanel /> : null}
       {view === "admin" ? <AdminPanel /> : null}
+      {view === "about" ? <AboutPanel /> : null}
       {view === "settings" ? <SettingsPanel user={user} /> : null}
     </section>
   );
@@ -1462,7 +1502,7 @@ function ReviewPanel({
         ) : (
           wrongQuestions.map((item) => (
             <article className="tool-item" key={item.id}>
-              <strong>{item.title}</strong>
+              <div className="wrong-title"><MarkdownView>{item.title}</MarkdownView></div>
               <span>{item.knowledgePoint} · {item.reason}</span>
               <textarea
                 placeholder="不看答案，重新写一遍你的解题思路"
@@ -1977,12 +2017,61 @@ function GoalsPanel() {
 }
 
 function AdminPanel() {
+  type AdminUserRow = {
+    id: string;
+    email: string;
+    name: string;
+    grade: string;
+    role: UserProfile["role"];
+    status: "active" | "suspended";
+    createdAt: string;
+    classCount: number;
+    classes: string;
+  };
+  type AdminClassRow = {
+    id: string;
+    name: string;
+    subject: string;
+    teacherId: string;
+    teacherName: string;
+    teacherEmail: string;
+    studentCount: number;
+  };
+  type AdminClassStudent = { id: string; email: string; name: string; grade: string; role: UserProfile["role"]; status: string; joinedAt: string };
+  type AdminAuditLog = { id: string; action: string; targetType: string; targetId: string; detail: string; createdAt: string; adminName: string; adminEmail: string };
   const [data, setData] = useState<null | {
     totals: { totalUsers: number; activeUsers: number; totalMinutes: number; submittedAssignments: number };
     trends: Array<{ day: string; minutes: number; correct: number; wrong: number }>;
     hotKnowledge: Array<{ point: string; count: number }>;
     classMastery: Array<{ className: string; subject: string; averageMastery: number }>;
+    roleBreakdown: Array<{ role: string; count: number }>;
+    recentUsers: Array<{ id: string; email: string; name: string; grade: string; role: string; createdAt: string }>;
+    recentActivity: Array<{
+      eventType: string;
+      knowledgePoint: string;
+      minutes: number;
+      correct: number;
+      wrong: number;
+      createdAt: string;
+      userName: string;
+      userEmail: string;
+    }>;
   }>(null);
+  const [adminUsers, setAdminUsers] = useState<AdminUserRow[]>([]);
+  const [adminClasses, setAdminClasses] = useState<AdminClassRow[]>([]);
+  const [userQuery, setUserQuery] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState("");
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [targetClassId, setTargetClassId] = useState("");
+  const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({});
+  const [profileDrafts, setProfileDrafts] = useState<Record<string, { email: string; name: string; grade: string }>>({});
+  const [bulkText, setBulkText] = useState("");
+  const [classDraft, setClassDraft] = useState({ id: "", name: "", subject: "数学", teacherId: "" });
+  const [classStudents, setClassStudents] = useState<AdminClassStudent[]>([]);
+  const [guardianDraft, setGuardianDraft] = useState({ studentId: "", guardianEmail: "" });
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
+  const [adminMessage, setAdminMessage] = useState("");
+  const [adminWorking, setAdminWorking] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function load() {
@@ -1995,51 +2084,567 @@ function AdminPanel() {
     }
   }
 
+  async function refreshAdminOps() {
+    setAdminWorking("refresh");
+    try {
+      const [usersResult, classesResult] = await Promise.all([
+        loadAdminUsers({ q: userQuery, role: userRoleFilter }),
+        loadAdminClasses()
+      ]);
+      setAdminUsers(usersResult.users);
+      setAdminClasses(classesResult.classes);
+      setTargetClassId((current) => current || classesResult.classes[0]?.id || "");
+      setClassDraft((current) => ({ ...current, teacherId: current.teacherId || usersResult.users.find((user) => user.role === "teacher" || user.role === "admin")?.id || "" }));
+      setSelectedUserIds((current) => current.filter((id) => usersResult.users.some((user) => user.id === id)));
+      setProfileDrafts((current) => {
+        const next = { ...current };
+        for (const user of usersResult.users) {
+          if (!next[user.id]) next[user.id] = { email: user.email, name: user.name, grade: user.grade };
+        }
+        return next;
+      });
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  async function refreshAuditLogs() {
+    const result = await loadAdminAuditLogs();
+    setAuditLogs(result.logs);
+  }
+
   useEffect(() => {
     void load();
+    void refreshAdminOps();
+    void refreshAuditLogs();
+    // Initial admin ops load uses default filters; later reloads are explicit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const roleLabel = (role: string) => {
+    if (role === "admin") return "管理员";
+    if (role === "teacher") return "老师";
+    if (role === "parent") return "家长";
+    return "学生";
+  };
+
+  const shortDate = (value: string) => {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value.slice(0, 10);
+    return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  };
+
+  const parseBulkUsers = () => bulkText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [email = "", password = "", name = "", grade = "", role = "student"] = line.split(/[,，\t]/).map((item) => item.trim());
+      return { email, password, name, grade, role: (role || "student") as UserProfile["role"] };
+    });
+
+  async function changeUserRole(id: string, role: UserProfile["role"]) {
+    setAdminWorking(`role-${id}`);
+    setAdminMessage("");
+    try {
+      await updateAdminUserRole(id, role);
+      setAdminMessage("角色已更新");
+      await refreshAdminOps();
+      await load();
+      await refreshAuditLogs();
+    } catch (error) {
+      setAdminMessage(error instanceof Error ? error.message : "角色更新失败");
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  async function resetPassword(id: string) {
+    const password = passwordDrafts[id] ?? "";
+    if (password.length < 8) {
+      setAdminMessage("新密码至少 8 位");
+      return;
+    }
+    setAdminWorking(`password-${id}`);
+    setAdminMessage("");
+    try {
+      await resetAdminUserPassword(id, password);
+      setPasswordDrafts((state) => ({ ...state, [id]: "" }));
+      setAdminMessage("密码已重置");
+      await refreshAuditLogs();
+    } catch (error) {
+      setAdminMessage(error instanceof Error ? error.message : "密码重置失败");
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  async function addSelectedToClass() {
+    if (!targetClassId || !selectedUserIds.length) {
+      setAdminMessage("请先选择班级和用户");
+      return;
+    }
+    setAdminWorking("class-add");
+    setAdminMessage("");
+    try {
+      const result = await forceUsersIntoClass(targetClassId, { userIds: selectedUserIds });
+      setAdminMessage(`已匹配 ${result.matched} 个账号，新加入 ${result.added} 个`);
+      await refreshAdminOps();
+      await loadClassRoster(targetClassId);
+      await refreshAuditLogs();
+    } catch (error) {
+      setAdminMessage(error instanceof Error ? error.message : "加入班级失败");
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  async function createBulkUsers() {
+    const users = parseBulkUsers();
+    if (!users.length) {
+      setAdminMessage("请先填写批量账号");
+      return;
+    }
+    setAdminWorking("bulk");
+    setAdminMessage("");
+    try {
+      const result = await bulkCreateAdminUsers({ classId: targetClassId || undefined, users });
+      setAdminMessage(`创建 ${result.createdCount} 个，跳过 ${result.skippedCount} 个${result.skipped.length ? `：${result.skipped.map((item) => `${item.email} ${item.reason}`).join("；")}` : ""}`);
+      if (result.createdCount) setBulkText("");
+      await refreshAdminOps();
+      await load();
+      await refreshAuditLogs();
+    } catch (error) {
+      setAdminMessage(error instanceof Error ? error.message : "批量创建失败");
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  const toggleSelectedUser = (id: string, checked: boolean) => {
+    setSelectedUserIds((state) => checked ? Array.from(new Set([...state, id])) : state.filter((item) => item !== id));
+  };
+
+  async function saveProfile(id: string) {
+    const draft = profileDrafts[id];
+    if (!draft?.email || !draft?.name) {
+      setAdminMessage("账号和姓名不能为空");
+      return;
+    }
+    setAdminWorking(`profile-${id}`);
+    setAdminMessage("");
+    try {
+      await updateAdminUserProfile(id, draft);
+      setAdminMessage("用户资料已更新");
+      await refreshAdminOps();
+      await refreshAuditLogs();
+    } catch (error) {
+      setAdminMessage(error instanceof Error ? error.message : "资料更新失败");
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  async function changeUserStatus(id: string, status: "active" | "suspended") {
+    setAdminWorking(`status-${id}`);
+    setAdminMessage("");
+    try {
+      await updateAdminUserStatus(id, status);
+      setAdminMessage(status === "suspended" ? "账号已停用" : "账号已启用");
+      await refreshAdminOps();
+      await refreshAuditLogs();
+    } catch (error) {
+      setAdminMessage(error instanceof Error ? error.message : "账号状态更新失败");
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  async function saveClass() {
+    if (!classDraft.name.trim() || !classDraft.subject.trim() || !classDraft.teacherId) {
+      setAdminMessage("班级名称、科目和班主任不能为空");
+      return;
+    }
+    setAdminWorking("class-save");
+    setAdminMessage("");
+    try {
+      if (classDraft.id) {
+        await updateAdminClass(classDraft.id, classDraft);
+        setAdminMessage("班级已更新");
+      } else {
+        await createAdminClass(classDraft);
+        setAdminMessage("班级已创建");
+      }
+      setClassDraft({ id: "", name: "", subject: "数学", teacherId: classDraft.teacherId });
+      await refreshAdminOps();
+      await refreshAuditLogs();
+    } catch (error) {
+      setAdminMessage(error instanceof Error ? error.message : "班级保存失败");
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  async function loadClassRoster(classId = targetClassId) {
+    if (!classId) {
+      setClassStudents([]);
+      return;
+    }
+    setAdminWorking("roster");
+    try {
+      const result = await loadAdminClassStudents(classId);
+      setClassStudents(result.students);
+      setTargetClassId(classId);
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  async function removeFromClass(userId: string) {
+    if (!targetClassId) return;
+    setAdminWorking(`remove-${userId}`);
+    setAdminMessage("");
+    try {
+      const result = await removeAdminClassStudent(targetClassId, userId);
+      setAdminMessage(`已移出 ${result.removed} 个班级成员`);
+      await loadClassRoster(targetClassId);
+      await refreshAdminOps();
+      await refreshAuditLogs();
+    } catch (error) {
+      setAdminMessage(error instanceof Error ? error.message : "移出班级失败");
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
+  async function bindGuardian() {
+    if (!guardianDraft.studentId || !guardianDraft.guardianEmail.trim()) {
+      setAdminMessage("请选择学生并填写家长邮箱");
+      return;
+    }
+    setAdminWorking("guardian");
+    setAdminMessage("");
+    try {
+      await createAdminGuardianLink(guardianDraft);
+      setGuardianDraft({ studentId: guardianDraft.studentId, guardianEmail: "" });
+      setAdminMessage("家长绑定已创建");
+      await refreshAuditLogs();
+    } catch (error) {
+      setAdminMessage(error instanceof Error ? error.message : "家长绑定失败");
+    } finally {
+      setAdminWorking("");
+    }
+  }
+
   return (
-    <section className="tool-surface">
-      <h2>运营数据看板</h2>
-      <p>用于查看整体学习活跃、热门知识点和班级掌握度。</p>
-      <Button type="button" variant="outlined" onClick={() => void load()}>{loading ? "刷新中..." : "刷新数据"}</Button>
+    <section className="tool-surface admin-panel">
+      <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ alignItems: { xs: "flex-start", md: "center" }, justifyContent: "space-between" }}>
+        <Box>
+          <Typography variant="overline">School Admin</Typography>
+          <h2>校级管理面板</h2>
+          <p>仅管理员账号可访问，用于校领导查看全校学习活跃、用户结构、班级掌握度和最近学习动态。</p>
+        </Box>
+        <Button type="button" variant="outlined" startIcon={<History size={16} />} onClick={() => void load()}>
+          {loading ? "刷新中..." : "刷新数据"}
+        </Button>
+      </Stack>
       {data ? (
         <>
           <div className="dashboard-grid">
             <Metric label="总用户" value={String(data.totals.totalUsers)} />
             <Metric label="7日活跃" value={String(data.totals.activeUsers)} />
-            <Metric label="总学习分钟" value={String(data.totals.totalMinutes)} />
+            <Metric label="累计学习分钟" value={String(data.totals.totalMinutes)} />
             <Metric label="已交作业" value={String(data.totals.submittedAssignments)} />
           </div>
-          <p className="data-source-note">数据来自当前数据库的用户、学习记录、班级、作业提交和掌握度表。</p>
-          <div className="result-block">
+          <p className="data-source-note">数据来自当前数据库的用户、学习记录、班级、作业提交和掌握度表。管理员账号不会出现在注册入口，只能由部署种子或数据库维护。</p>
+          <Paper component="section" className="feature-card admin-feature-card" elevation={0}>
             <h3>学习趋势</h3>
             {data.trends.length ? (
               <div className="heatmap-list">
                 {data.trends.map((item) => (
                   <div key={item.day}>
-                    <span>{item.day} · {item.minutes}分钟 · 对{item.correct}/错{item.wrong}</span>
+                    <span>{item.day} · {item.minutes} 分钟 · 对 {item.correct} / 错 {item.wrong}</span>
                     <strong style={{ width: `${Math.min(100, Math.max(8, item.minutes))}%` }}>{item.minutes}</strong>
                   </div>
                 ))}
               </div>
             ) : <div className="empty-tool">还没有真实学习记录。学生完成 AI 辅导、测验或作业后，这里会自动产生趋势。</div>}
-          </div>
-          <div className="dashboard-grid">
-            <section className="feature-card">
+          </Paper>
+          <div className="dashboard-grid admin-grid">
+            <Paper component="section" className="feature-card" elevation={0}>
+              <h3>用户结构</h3>
+              <div className="admin-list">
+                {data.roleBreakdown.length ? data.roleBreakdown.map((item) => (
+                  <div key={item.role}>
+                    <span>{roleLabel(item.role)}</span>
+                    <strong>{item.count}</strong>
+                  </div>
+                )) : <p>暂无用户数据。</p>}
+              </div>
+            </Paper>
+            <Paper component="section" className="feature-card" elevation={0}>
               <h3>热门知识点</h3>
-              {data.hotKnowledge.length ? data.hotKnowledge.map((item) => <p key={item.point}>{item.point} · {item.count}</p>) : <p>暂无真实学习数据。</p>}
-            </section>
-            <section className="feature-card">
+              <div className="admin-list">
+                {data.hotKnowledge.length ? data.hotKnowledge.map((item) => (
+                  <div key={item.point}>
+                    <span>{item.point}</span>
+                    <strong>{item.count}</strong>
+                  </div>
+                )) : <p>暂无真实学习数据。</p>}
+              </div>
+            </Paper>
+            <Paper component="section" className="feature-card" elevation={0}>
               <h3>班级平均掌握度</h3>
-              {data.classMastery.length ? data.classMastery.map((item) => (
-                <p key={`${item.className}-${item.subject}`}>{item.className} · {item.subject} · {item.averageMastery ?? 0}%</p>
-              )) : <p>暂无班级数据。</p>}
-            </section>
+              <div className="admin-list">
+                {data.classMastery.length ? data.classMastery.map((item) => (
+                  <div key={`${item.className}-${item.subject}`}>
+                    <span>{item.className} · {item.subject}</span>
+                    <strong>{item.averageMastery ?? 0}%</strong>
+                  </div>
+                )) : <p>暂无班级数据。</p>}
+              </div>
+            </Paper>
+            <Paper component="section" className="feature-card" elevation={0}>
+              <h3>最近用户</h3>
+              <div className="admin-list">
+                {data.recentUsers.length ? data.recentUsers.map((item) => (
+                  <div key={item.id}>
+                    <span>{item.name || item.email} · {roleLabel(item.role)}</span>
+                    <strong>{shortDate(item.createdAt)}</strong>
+                  </div>
+                )) : <p>暂无用户。</p>}
+              </div>
+            </Paper>
           </div>
+          <Paper component="section" className="feature-card admin-feature-card admin-ops" elevation={0}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ alignItems: { xs: "stretch", md: "center" }, justifyContent: "space-between" }}>
+              <Box>
+                <h3>账号与班级运维</h3>
+                <p>管理员可授予管理员权限、重置密码、批量建号，并把账号强制加入指定班级。</p>
+              </Box>
+              <Button type="button" variant="outlined" onClick={() => void refreshAdminOps()}>
+                {adminWorking === "refresh" ? "加载中..." : "刷新用户"}
+              </Button>
+            </Stack>
+            {adminMessage ? <Alert severity={adminMessage.includes("失败") || adminMessage.includes("至少") ? "warning" : "success"}>{adminMessage}</Alert> : null}
+            <div className="form-grid admin-control-grid">
+              <TextField label="搜索用户" size="small" value={userQuery} onChange={(event) => setUserQuery(event.target.value)} />
+              <TextField select label="角色" size="small" value={userRoleFilter} onChange={(event) => setUserRoleFilter(event.target.value)}>
+                <MenuItem value="">全部角色</MenuItem>
+                <MenuItem value="student">学生</MenuItem>
+                <MenuItem value="teacher">老师</MenuItem>
+                <MenuItem value="parent">家长</MenuItem>
+                <MenuItem value="admin">管理员</MenuItem>
+              </TextField>
+              <TextField select label="目标班级" size="small" value={targetClassId} onChange={(event) => setTargetClassId(event.target.value)}>
+                <MenuItem value="">不选择班级</MenuItem>
+                {adminClasses.map((item) => (
+                  <MenuItem key={item.id} value={item.id}>{item.name} · {item.subject} · {item.teacherName || item.teacherEmail}</MenuItem>
+                ))}
+              </TextField>
+              <Button type="button" variant="contained" disabled={!targetClassId || !selectedUserIds.length || adminWorking === "class-add"} onClick={() => void addSelectedToClass()}>
+                加入所选用户
+              </Button>
+              <Button type="button" variant="outlined" onClick={() => void refreshAdminOps()}>应用筛选</Button>
+            </div>
+            <div className="admin-bulk-box">
+              <TextField
+                label="批量创建账号"
+                placeholder="每行：账号,密码,姓名,年级,角色&#10;例如：stu001,cocode1234,小草,初三,student"
+                value={bulkText}
+                onChange={(event) => setBulkText(event.target.value)}
+                multiline
+                minRows={4}
+              />
+              <Button type="button" variant="contained" disabled={adminWorking === "bulk"} onClick={() => void createBulkUsers()}>
+                {adminWorking === "bulk" ? "创建中..." : "批量创建并入班"}
+              </Button>
+            </div>
+            <div className="admin-management-grid">
+              <Paper component="section" className="admin-subcard" elevation={0}>
+                <h4>{classDraft.id ? "编辑班级" : "校级创建班级"}</h4>
+                <TextField label="班级名称" size="small" value={classDraft.name} onChange={(event) => setClassDraft((state) => ({ ...state, name: event.target.value }))} />
+                <TextField label="科目" size="small" value={classDraft.subject} onChange={(event) => setClassDraft((state) => ({ ...state, subject: event.target.value }))} />
+                <TextField select label="班主任/负责老师" size="small" value={classDraft.teacherId} onChange={(event) => setClassDraft((state) => ({ ...state, teacherId: event.target.value }))}>
+                  <MenuItem value="">请选择</MenuItem>
+                  {adminUsers.filter((user) => user.role === "teacher" || user.role === "admin").map((user) => (
+                    <MenuItem key={user.id} value={user.id}>{user.name || user.email} · {roleLabel(user.role)}</MenuItem>
+                  ))}
+                </TextField>
+                <div className="button-row">
+                  <Button type="button" variant="contained" disabled={adminWorking === "class-save"} onClick={() => void saveClass()}>
+                    {classDraft.id ? "保存班级" : "创建班级"}
+                  </Button>
+                  {classDraft.id ? <Button type="button" variant="outlined" onClick={() => setClassDraft({ id: "", name: "", subject: "数学", teacherId: classDraft.teacherId })}>取消编辑</Button> : null}
+                </div>
+              </Paper>
+              <Paper component="section" className="admin-subcard" elevation={0}>
+                <h4>全校班级治理</h4>
+                <div className="admin-list">
+                  {adminClasses.slice(0, 8).map((item) => (
+                    <div key={item.id}>
+                      <span>{item.name} · {item.subject} · {item.studentCount} 人</span>
+                      <strong>{item.teacherName || item.teacherEmail}</strong>
+                      <div className="button-row compact-row">
+                        <Button size="small" type="button" variant="outlined" onClick={() => setClassDraft({ id: item.id, name: item.name, subject: item.subject, teacherId: item.teacherId })}>编辑</Button>
+                        <Button size="small" type="button" variant="outlined" onClick={() => void loadClassRoster(item.id)}>花名册</Button>
+                      </div>
+                    </div>
+                  ))}
+                  {adminClasses.length === 0 ? <p>暂无班级。</p> : null}
+                </div>
+              </Paper>
+              <Paper component="section" className="admin-subcard" elevation={0}>
+                <h4>家校绑定</h4>
+                <TextField select label="学生" size="small" value={guardianDraft.studentId} onChange={(event) => setGuardianDraft((state) => ({ ...state, studentId: event.target.value }))}>
+                  <MenuItem value="">请选择学生</MenuItem>
+                  {adminUsers.filter((user) => user.role === "student").map((user) => (
+                    <MenuItem key={user.id} value={user.id}>{user.name || user.email} · {user.grade || "未填写"}</MenuItem>
+                  ))}
+                </TextField>
+                <TextField label="家长邮箱" size="small" value={guardianDraft.guardianEmail} onChange={(event) => setGuardianDraft((state) => ({ ...state, guardianEmail: event.target.value }))} />
+                <Button type="button" variant="contained" disabled={adminWorking === "guardian"} onClick={() => void bindGuardian()}>绑定家长</Button>
+              </Paper>
+            </div>
+            {classStudents.length ? (
+              <Paper component="section" className="admin-subcard admin-roster" elevation={0}>
+                <h4>当前班级花名册</h4>
+                <div className="admin-list">
+                  {classStudents.map((student) => (
+                    <div key={student.id}>
+                      <span>{student.name || student.email} · {student.email} · {student.grade || "未填写"}</span>
+                      <strong>{roleLabel(student.role)}</strong>
+                      <Button size="small" type="button" variant="outlined" disabled={adminWorking === `remove-${student.id}`} onClick={() => void removeFromClass(student.id)}>
+                        移出班级
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </Paper>
+            ) : null}
+            <div className="admin-user-table">
+              {adminUsers.map((item) => (
+                <div className="admin-user-row" key={item.id}>
+                  <label className="admin-select-user">
+                    <input
+                      type="checkbox"
+                      checked={selectedUserIds.includes(item.id)}
+                      onChange={(event) => toggleSelectedUser(item.id, event.target.checked)}
+                    />
+                    <span>
+                      <strong>{item.name || item.email}</strong>
+                      <small>{item.email} · {item.grade || "未填写"} · {item.classes || "未入班"} · {item.status === "suspended" ? "已停用" : "正常"}</small>
+                    </span>
+                  </label>
+                  <div className="admin-profile-fields">
+                    <TextField label="账号" size="small" value={profileDrafts[item.id]?.email ?? item.email} onChange={(event) => setProfileDrafts((state) => ({ ...state, [item.id]: { ...(state[item.id] ?? { email: item.email, name: item.name, grade: item.grade }), email: event.target.value } }))} />
+                    <TextField label="姓名" size="small" value={profileDrafts[item.id]?.name ?? item.name} onChange={(event) => setProfileDrafts((state) => ({ ...state, [item.id]: { ...(state[item.id] ?? { email: item.email, name: item.name, grade: item.grade }), name: event.target.value } }))} />
+                    <TextField label="年级/备注" size="small" value={profileDrafts[item.id]?.grade ?? item.grade} onChange={(event) => setProfileDrafts((state) => ({ ...state, [item.id]: { ...(state[item.id] ?? { email: item.email, name: item.name, grade: item.grade }), grade: event.target.value } }))} />
+                  </div>
+                  <TextField select label="角色" size="small" value={item.role} onChange={(event) => void changeUserRole(item.id, event.target.value as UserProfile["role"])}>
+                    <MenuItem value="student">学生</MenuItem>
+                    <MenuItem value="teacher">老师</MenuItem>
+                    <MenuItem value="parent">家长</MenuItem>
+                    <MenuItem value="admin">管理员</MenuItem>
+                  </TextField>
+                  <TextField
+                    label="新密码"
+                    size="small"
+                    type="password"
+                    value={passwordDrafts[item.id] ?? ""}
+                    onChange={(event) => setPasswordDrafts((state) => ({ ...state, [item.id]: event.target.value }))}
+                  />
+                  <Button type="button" variant="outlined" disabled={adminWorking === `password-${item.id}`} onClick={() => void resetPassword(item.id)}>
+                    重置密码
+                  </Button>
+                  <Button type="button" variant="outlined" disabled={adminWorking === `profile-${item.id}`} onClick={() => void saveProfile(item.id)}>
+                    保存资料
+                  </Button>
+                  <Button type="button" variant={item.status === "suspended" ? "contained" : "outlined"} disabled={adminWorking === `status-${item.id}`} onClick={() => void changeUserStatus(item.id, item.status === "suspended" ? "active" : "suspended")}>
+                    {item.status === "suspended" ? "启用" : "停用"}
+                  </Button>
+                </div>
+              ))}
+              {adminUsers.length === 0 ? <div className="empty-tool">没有匹配的用户。</div> : null}
+            </div>
+            <Paper component="section" className="admin-subcard admin-audit" elevation={0}>
+              <Stack direction="row" spacing={2} sx={{ alignItems: "center", justifyContent: "space-between" }}>
+                <h4>管理员审计日志</h4>
+                <Button size="small" type="button" variant="outlined" onClick={() => void refreshAuditLogs()}>刷新日志</Button>
+              </Stack>
+              <div className="admin-activity-list">
+                {auditLogs.map((log) => (
+                  <div key={log.id}>
+                    <span>{shortDate(log.createdAt)} · {log.adminName || log.adminEmail}</span>
+                    <strong>{log.action} · {log.targetType}:{log.targetId}</strong>
+                    <p>{log.detail || "无详情"}</p>
+                  </div>
+                ))}
+                {auditLogs.length === 0 ? <div className="empty-tool">暂无管理员操作日志。</div> : null}
+              </div>
+            </Paper>
+          </Paper>
+          <Paper component="section" className="feature-card admin-feature-card" elevation={0}>
+            <h3>最近学习动态</h3>
+            <div className="admin-activity-list">
+              {data.recentActivity.length ? data.recentActivity.map((item) => (
+                <div key={`${item.userEmail}-${item.createdAt}-${item.eventType}`}>
+                  <span>{shortDate(item.createdAt)}</span>
+                  <strong>{item.userName || item.userEmail}</strong>
+                  <p>{item.eventType} · {item.knowledgePoint} · {item.minutes} 分钟 · 对 {item.correct} / 错 {item.wrong}</p>
+                </div>
+              )) : <div className="empty-tool">暂无学习动态。</div>}
+            </div>
+          </Paper>
         </>
       ) : null}
+    </section>
+  );
+}
+
+function AboutPanel() {
+  const highlights = [
+    { label: "当前版本", value: `v${APP_VERSION}` },
+    { label: "产品形态", value: "AI 学习 SaaS" },
+    { label: "核心体验", value: "辅导 · 批改 · 复习 · 管理" },
+    { label: "部署模式", value: "Vite + Express + PM2" }
+  ];
+
+  return (
+    <section className="about-page">
+      <Paper component="section" className="about-hero" elevation={0}>
+        <div>
+          <Typography variant="overline">About Zhixue AI</Typography>
+          <h2>智学AI</h2>
+          <p>一套面向真实学校场景的 AI 学习产品，把学生学习、老师教学、家长观察和校级管理放进同一个清晰闭环。</p>
+        </div>
+        <Stack className="about-version-card" spacing={1}>
+          <span>Release</span>
+          <strong>v{APP_VERSION}</strong>
+          <small>2026 SaaS Edition</small>
+        </Stack>
+      </Paper>
+
+      <div className="about-metrics">
+        {highlights.map((item) => (
+          <Paper component="article" className="about-metric" elevation={0} key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </Paper>
+        ))}
+      </div>
+
+      <Paper component="section" className="about-readme" elevation={0}>
+        <div className="about-readme-header">
+          <div>
+            <Typography variant="overline">README</Typography>
+            <h3>项目说明</h3>
+          </div>
+          <span>Markdown / HTML Render</span>
+        </div>
+        <MarkdownView>{ABOUT_README}</MarkdownView>
+      </Paper>
     </section>
   );
 }

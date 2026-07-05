@@ -537,5 +537,151 @@ export async function loadAdminDashboard() {
     trends: Array<{ day: string; minutes: number; correct: number; wrong: number }>;
     hotKnowledge: Array<{ point: string; count: number }>;
     classMastery: Array<{ className: string; subject: string; averageMastery: number }>;
+    roleBreakdown: Array<{ role: string; count: number }>;
+    recentUsers: Array<{ id: string; email: string; name: string; grade: string; role: string; createdAt: string }>;
+    recentActivity: Array<{
+      eventType: string;
+      knowledgePoint: string;
+      minutes: number;
+      correct: number;
+      wrong: number;
+      createdAt: string;
+      userName: string;
+      userEmail: string;
+    }>;
   }>("/api/admin/dashboard");
+}
+
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  name: string;
+  grade: string;
+  role: UserProfile["role"];
+  status: "active" | "suspended";
+  createdAt: string;
+  classCount: number;
+  classes: string;
+}
+
+export interface AdminClassRow {
+  id: string;
+  name: string;
+  subject: string;
+  createdAt: string;
+  teacherId: string;
+  teacherName: string;
+  teacherEmail: string;
+  studentCount: number;
+}
+
+export interface AdminAuditLog {
+  id: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  detail: string;
+  createdAt: string;
+  adminName: string;
+  adminEmail: string;
+}
+
+export async function loadAdminUsers(payload: { q?: string; role?: string } = {}) {
+  const params = new URLSearchParams();
+  if (payload.q) params.set("q", payload.q);
+  if (payload.role) params.set("role", payload.role);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<{ users: AdminUserRow[] }>(`/api/admin/users${suffix}`);
+}
+
+export async function loadAdminClasses() {
+  return request<{ classes: AdminClassRow[] }>("/api/admin/classes");
+}
+
+export async function updateAdminUserRole(id: string, role: UserProfile["role"]) {
+  return request<{ ok: boolean; role: UserProfile["role"] }>(`/api/admin/users/${id}/role`, {
+    method: "POST",
+    body: JSON.stringify({ role })
+  });
+}
+
+export async function resetAdminUserPassword(id: string, password: string) {
+  return request<{ ok: boolean }>(`/api/admin/users/${id}/password`, {
+    method: "POST",
+    body: JSON.stringify({ password })
+  });
+}
+
+export async function updateAdminUserProfile(id: string, payload: { email: string; name: string; grade: string }) {
+  return request<{ ok: boolean }>(`/api/admin/users/${id}/profile`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateAdminUserStatus(id: string, status: "active" | "suspended") {
+  return request<{ ok: boolean; status: "active" | "suspended" }>(`/api/admin/users/${id}/status`, {
+    method: "POST",
+    body: JSON.stringify({ status })
+  });
+}
+
+export async function forceUsersIntoClass(classId: string, payload: { userIds?: string[]; accounts?: string[] }) {
+  return request<{ ok: boolean; matched: number; added: number }>(`/api/admin/classes/${classId}/students`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function bulkCreateAdminUsers(payload: {
+  classId?: string;
+  users: Array<{ email: string; password: string; name: string; grade: string; role: UserProfile["role"] }>;
+}) {
+  return request<{
+    created: Array<{ id: string; email: string; name: string; role: UserProfile["role"] }>;
+    skipped: Array<{ email: string; reason: string }>;
+    createdCount: number;
+    skippedCount: number;
+  }>("/api/admin/bulk-users", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function createAdminClass(payload: { name: string; subject: string; teacherId: string }) {
+  return request<{ class: { id: string; name: string; subject: string; teacherId: string; createdAt: string } }>("/api/admin/classes", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateAdminClass(id: string, payload: { name: string; subject: string; teacherId: string }) {
+  return request<{ ok: boolean }>(`/api/admin/classes/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function loadAdminClassStudents(id: string) {
+  return request<{
+    class: { id: string; name: string; subject: string };
+    students: Array<{ id: string; email: string; name: string; grade: string; role: UserProfile["role"]; status: string; joinedAt: string }>;
+  }>(`/api/admin/classes/${id}/students`);
+}
+
+export async function removeAdminClassStudent(classId: string, userId: string) {
+  return request<{ ok: boolean; removed: number }>(`/api/admin/classes/${classId}/students/${userId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function createAdminGuardianLink(payload: { studentId: string; guardianEmail: string }) {
+  return request<{ link: { id: string; studentId: string; guardianEmail: string; status: string; createdAt: string } }>("/api/admin/guardian-links", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function loadAdminAuditLogs() {
+  return request<{ logs: AdminAuditLog[] }>("/api/admin/audit-logs");
 }

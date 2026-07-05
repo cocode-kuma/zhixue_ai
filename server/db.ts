@@ -236,11 +236,22 @@ CREATE TABLE IF NOT EXISTS user_achievements (
   unlocked_at TEXT NOT NULL,
   PRIMARY KEY (user_id, code)
 );
+
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+  id TEXT PRIMARY KEY,
+  admin_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
 `);
 
 ensureColumn("assignment_submissions", "report", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("users", "avatar_url", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("users", "role", "TEXT NOT NULL DEFAULT 'student'");
+ensureColumn("users", "status", "TEXT NOT NULL DEFAULT 'active'");
 ensureColumn("assignments", "questions_text", "TEXT NOT NULL DEFAULT ''");
 
 export function newId(prefix: string) {

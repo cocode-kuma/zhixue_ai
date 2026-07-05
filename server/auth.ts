@@ -41,8 +41,8 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
 
   try {
     const user = jwt.verify(token, effectiveJwtSecret) as AuthUser;
-    const exists = db.prepare("SELECT id FROM users WHERE id = ?").get(user.id);
-    if (!exists) {
+    const exists = db.prepare("SELECT id, status FROM users WHERE id = ?").get(user.id) as { id: string; status?: string } | undefined;
+    if (!exists || exists.status === "suspended") {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
