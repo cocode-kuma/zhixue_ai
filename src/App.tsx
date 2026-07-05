@@ -778,7 +778,7 @@ export function App() {
             <div className="wrong-stack">
               {wrongQuestions.slice(0, 5).map((item) => (
                 <Paper component="article" className="wrong-item" elevation={0} key={item.id}>
-                  <div className="wrong-title"><MarkdownView>{item.title}</MarkdownView></div>
+                  <div className="wrong-title"><MarkdownView>{formatWrongTitle(item.title)}</MarkdownView></div>
                   <span>{item.knowledgePoint}</span>
                   <Button type="button" variant="outlined" size="small" startIcon={<CheckCircle2 aria-hidden="true" />} onClick={() => void markWrongMastered(item.id)}>
                     已掌握
@@ -1502,7 +1502,7 @@ function ReviewPanel({
         ) : (
           wrongQuestions.map((item) => (
             <article className="tool-item" key={item.id}>
-              <div className="wrong-title"><MarkdownView>{item.title}</MarkdownView></div>
+              <div className="wrong-title"><MarkdownView>{formatWrongTitle(item.title)}</MarkdownView></div>
               <span>{item.knowledgePoint} · {item.reason}</span>
               <textarea
                 placeholder="不看答案，重新写一遍你的解题思路"
@@ -2764,6 +2764,13 @@ function markdownListFromJsonText(value: string) {
 function markdownBulletList(value: unknown) {
   const items = Array.isArray(value) ? value : value ? [value] : [];
   return items.map((item) => `- ${formatAiValue(item)}`).join("\n");
+}
+
+function formatWrongTitle(value: string) {
+  return value
+    .replace(/\$\s*([^$\n]+?)\s*\$/g, (_match, formula: string) => `$${String(formula).replace(/\s+/g, " ").trim()}$`)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function formatAiValue(value: unknown): string {
