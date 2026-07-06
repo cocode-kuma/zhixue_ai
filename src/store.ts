@@ -61,6 +61,7 @@ interface StudyState {
   unreadConversationIds: Record<string, string>;
   error: string;
   messages: ChatMessage[];
+  messagesByConversationId: Record<string, ChatMessage[]>;
   wrongQuestions: WrongQuestion[];
   knowledgeCards: KnowledgeCard[];
   generatedPlan: {
@@ -123,6 +124,32 @@ function removeRecordKey<T>(record: Record<string, T>, key: string) {
   return next;
 }
 
+function displayMessages(messages: ChatMessage[]) {
+  return messages.length ? messages : [welcomeMessage];
+}
+
+function cachedMessagesFor(
+  state: Pick<StudyState, "conversationId" | "messages" | "messagesByConversationId">,
+  conversationId: string
+) {
+  return state.messagesByConversationId[conversationId] ?? (state.conversationId === conversationId ? state.messages : [welcomeMessage]);
+}
+
+function replaceOrAppendMessage(messages: ChatMessage[], nextMessage: ChatMessage) {
+  const existingIndex = messages.findIndex((item) => item.id === nextMessage.id);
+  if (existingIndex === -1) return [...messages, nextMessage];
+  return messages.map((item) => (item.id === nextMessage.id ? nextMessage : item));
+}
+
+function removeMessage(messages: ChatMessage[], messageId: string) {
+  return messages.filter((item) => item.id !== messageId);
+}
+
+function resolveConversationMessages(serverMessages: ChatMessage[], cachedMessages: ChatMessage[] | undefined) {
+  if (cachedMessages?.length) return cachedMessages;
+  return displayMessages(serverMessages);
+}
+
 function modeTitle(mode: StudyMode) {
   if (mode === "concept") return "概念学习";
   if (mode === "free") return "学习问答";
@@ -156,6 +183,7 @@ export const useStudyStore = create<StudyState>((set, get) => ({
   unreadConversationIds: {},
   error: "",
   messages: [welcomeMessage],
+  messagesByConversationId: {},
   wrongQuestions: [],
   knowledgeCards: [],
   generatedPlan: null,
@@ -203,6 +231,7 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       conversations: [],
       view: "dashboard",
       messages: [welcomeMessage],
+      messagesByConversationId: {},
       drafts: {},
       wrongQuestions: [],
       knowledgeCards: [],
@@ -223,12 +252,14 @@ export const useStudyStore = create<StudyState>((set, get) => ({
     }
     try {
       const data = await bootstrap();
+      const activeMessages = displayMessages(data.messages);
       set({
         authReady: true,
         user: data.user,
         conversations: data.conversations,
         conversationId: data.activeConversationId,
-        messages: data.messages.length > 0 ? data.messages : [welcomeMessage],
+        messages: activeMessages,
+        messagesByConversationId: data.activeConversationId ? { [data.activeConversationId]: activeMessages } : {},
         input: data.activeConversationId ? get().drafts[data.activeConversationId] ?? "" : "",
         wrongQuestions: data.wrongQuestions ?? [],
         knowledgeCards: data.knowledgeCards ?? [],
@@ -250,6 +281,7 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       conversationId: data.conversation.id,
       conversations: [data.conversation, ...state.conversations],
       messages: [welcomeMessage],
+      messagesByConversationId: { ...state.messagesByConversationId, [data.conversation.id]: [welcomeMessage] },
       input: state.drafts[`mode:${mode}`] ?? state.drafts[data.conversation.id] ?? "",
       drafts: {
         ...state.drafts,
@@ -266,6 +298,7 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       conversationId: data.conversation.id,
       conversations: [data.conversation, ...state.conversations],
       messages: [welcomeMessage],
+      messagesByConversationId: { ...state.messagesByConversationId, [data.conversation.id]: [welcomeMessage] },
       input: nextInput,
       drafts: {
         ...state.drafts,
@@ -281,7 +314,11 @@ export const useStudyStore = create<StudyState>((set, get) => ({
     set((state) => ({
       conversationId: data.conversation.id,
       mode: data.conversation.mode,
-      messages: data.messages.length ? data.messages : [welcomeMessage],
+      messages: resolveConversationMessages(data.messages, state.messagesByConversationId[data.conversation.id]),
+      messagesByConversationId: {
+        ...state.messagesByConversationId,
+        [data.conversation.id]: resolveConversationMessages(data.messages, state.messagesByConversationId[data.conversation.id])
+      },
       input: state.drafts[data.conversation.id] ?? "",
       unreadConversationIds: removeRecordKey(state.unreadConversationIds, data.conversation.id),
       error: ""
@@ -296,6 +333,7 @@ export const useStudyStore = create<StudyState>((set, get) => ({
         conversations,
         conversationId: removedActive ? "" : state.conversationId,
         messages: removedActive ? [welcomeMessage] : state.messages,
+        messagesByConversationId: removeRecordKey(state.messagesByConversationId, idToRemove),
         chatLoadingByConversationId: removeRecordKey(state.chatLoadingByConversationId, idToRemove),
         unreadConversationIds: removeRecordKey(state.unreadConversationIds, idToRemove)
       };
@@ -326,6 +364,8 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       set((state) => ({
         conversationId: data.conversation.id,
         conversations: [data.conversation, ...state.conversations],
+        messages: [welcomeMessage],
+        messagesByConversationId: { ...state.messagesByConversationId, [data.conversation.id]: [welcomeMessage] },
         drafts: {
           ...state.drafts,
           [data.conversation.id]: state.drafts[`mode:${mode}`] ?? ""
@@ -352,22 +392,31 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       },
       error: "",
       drafts: { ...state.drafts, [targetConversationId]: "" },
-      messages: state.conversationId === targetConversationId ? [...state.messages, userMessage] : state.messages
+      ...(() => {
+        const nextMessages = replaceOrAppendMessage(cachedMessagesFor(state, targetConversationId), userMessage);
+        return {
+          messagesByConversationId: { ...state.messagesByConversationId, [targetConversationId]: nextMessages },
+          messages: state.conversationId === targetConversationId ? nextMessages : state.messages
+        };
+      })()
     }));
 
     const assistantId = id("assistant_stream");
 
     try {
       set((state) => ({
-        messages: [
-          ...state.messages,
-          {
+        ...(() => {
+          const nextMessages = replaceOrAppendMessage(cachedMessagesFor(state, targetConversationId), {
             id: assistantId,
             role: "assistant",
             content: "",
             createdAt: now()
-          }
-        ]
+          });
+          return {
+            messagesByConversationId: { ...state.messagesByConversationId, [targetConversationId]: nextMessages },
+            messages: state.conversationId === targetConversationId ? nextMessages : state.messages
+          };
+        })()
       }));
 
       const streamResult: { current: StreamDoneResult | null } = { current: null };
@@ -385,14 +434,16 @@ export const useStudyStore = create<StudyState>((set, get) => ({
                   }
           })),
         onDelta: (delta) =>
-          set((state) => ({
-            messages:
-              state.chatLoadingByConversationId[targetConversationId] === requestId && state.conversationId === targetConversationId
-                ? state.messages.map((item) =>
-                    item.id === assistantId ? { ...item, content: item.content + delta } : item
-                  )
-                : state.messages
-          })),
+          set((state) => {
+            if (state.chatLoadingByConversationId[targetConversationId] !== requestId) return state;
+            const nextMessages = cachedMessagesFor(state, targetConversationId).map((item) =>
+              item.id === assistantId ? { ...item, content: item.content + delta } : item
+            );
+            return {
+              messagesByConversationId: { ...state.messagesByConversationId, [targetConversationId]: nextMessages },
+              messages: state.conversationId === targetConversationId ? nextMessages : state.messages
+            };
+          }),
         onDone: (data) => {
           streamResult.current = data;
         }
@@ -428,14 +479,18 @@ export const useStudyStore = create<StudyState>((set, get) => ({
                 },
                 ...state.conversations
               ],
-        messages:
-          state.conversationId === result.conversationId
-            ? state.messages.some((item) => item.id === assistantId)
-              ? state.messages.map((item) =>
-                  item.id === assistantId ? { ...result.message, content: result.message.content || item.content } : item
-                )
-              : [...state.messages, result.message]
-            : state.messages,
+        ...(() => {
+          const sourceMessages = cachedMessagesFor(state, result.conversationId);
+          const fallbackContent = sourceMessages.find((item) => item.id === assistantId)?.content ?? "";
+          const finalMessage = { ...result.message, content: result.message.content || fallbackContent };
+          const nextMessages = sourceMessages.some((item) => item.id === assistantId)
+            ? sourceMessages.map((item) => (item.id === assistantId ? finalMessage : item))
+            : replaceOrAppendMessage(sourceMessages, finalMessage);
+          return {
+            messagesByConversationId: { ...state.messagesByConversationId, [result.conversationId]: nextMessages },
+            messages: state.conversationId === result.conversationId ? nextMessages : state.messages
+          };
+        })(),
         unreadConversationIds:
           state.conversationId === result.conversationId
             ? removeRecordKey(state.unreadConversationIds, result.conversationId)
@@ -452,9 +507,13 @@ export const useStudyStore = create<StudyState>((set, get) => ({
         chatLoadingRequestId: "",
         chatLoadingByConversationId: removeRecordKey(state.chatLoadingByConversationId, targetConversationId),
         error: error instanceof Error ? error.message : "发送失败，请稍后再试",
-        messages: state.messages.some((item) => item.id === assistantId)
-          ? state.messages.filter((item) => item.id !== assistantId)
-          : state.messages
+        ...(() => {
+          const nextMessages = removeMessage(cachedMessagesFor(state, targetConversationId), assistantId);
+          return {
+            messagesByConversationId: { ...state.messagesByConversationId, [targetConversationId]: nextMessages },
+            messages: state.conversationId === targetConversationId ? nextMessages : state.messages
+          };
+        })()
       }));
     }
   },
