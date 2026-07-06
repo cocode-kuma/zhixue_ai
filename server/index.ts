@@ -1346,6 +1346,59 @@ app.get("/api/admin/dashboard", requireAuth, (_req: AuthedRequest, res) => {
   res.json({ totals, trends, hotKnowledge, classMastery, roleBreakdown, recentUsers, recentActivity });
 });
 
+app.get("/api/admin/activity", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const pageSize = Math.min(20, Math.max(1, Number(req.query.pageSize ?? 20) || 20));
+  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+  const maxRows = 1000;
+  const totalRow = db
+    .prepare("SELECT COUNT(*) AS total FROM (SELECT id FROM learning_records ORDER BY created_at DESC LIMIT ?) recent")
+    .get(maxRows) as { total: number };
+  const rows = db
+    .prepare(
+      `SELECT lr.id, lr.event_type AS eventType, lr.knowledge_point AS knowledgePoint,
+              lr.minutes, lr.correct, lr.wrong, lr.created_at AS createdAt,
+              u.name AS userName, u.email AS userEmail, u.role AS userRole
+       FROM (SELECT * FROM learning_records ORDER BY created_at DESC LIMIT ?) lr
+       JOIN users u ON u.id = lr.user_id
+       ORDER BY lr.created_at DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(maxRows, pageSize, (page - 1) * pageSize);
+  res.json({ rows, page, pageSize, total: totalRow.total, maxRows });
+});
+
+app.get("/api/admin/hot-knowledge", requireAuth, (req: AuthedRequest, res) => {
+  if (!requireRole(req, res, ["admin"])) return;
+  const pageSize = Math.min(20, Math.max(1, Number(req.query.pageSize ?? 20) || 20));
+  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+  const maxRows = 1000;
+  const totalRow = db
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM (
+         SELECT knowledge_point
+         FROM (SELECT knowledge_point FROM learning_records ORDER BY created_at DESC LIMIT ?)
+         GROUP BY knowledge_point
+       )`
+    )
+    .get(maxRows) as { total: number };
+  const rows = db
+    .prepare(
+      `SELECT knowledge_point AS point, COUNT(*) AS count,
+              COALESCE(SUM(minutes), 0) AS minutes,
+              COALESCE(SUM(correct), 0) AS correct,
+              COALESCE(SUM(wrong), 0) AS wrong,
+              MAX(created_at) AS lastSeenAt
+       FROM (SELECT * FROM learning_records ORDER BY created_at DESC LIMIT ?)
+       GROUP BY knowledge_point
+       ORDER BY count DESC, wrong DESC, minutes DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(maxRows, pageSize, (page - 1) * pageSize);
+  res.json({ rows, page, pageSize, total: totalRow.total, maxRows });
+});
+
 app.get("/api/admin/users", requireAuth, (req: AuthedRequest, res) => {
   if (!requireRole(req, res, ["admin"])) return;
   const q = String(req.query.q ?? "").trim().toLowerCase();

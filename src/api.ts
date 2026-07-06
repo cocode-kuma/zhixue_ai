@@ -639,6 +639,40 @@ export async function loadAdminDashboard() {
   }>("/api/admin/dashboard");
 }
 
+export interface AdminActivityRow {
+  id: string;
+  eventType: string;
+  knowledgePoint: string;
+  minutes: number;
+  correct: number;
+  wrong: number;
+  createdAt: string;
+  userName: string;
+  userEmail: string;
+  userRole: UserProfile["role"];
+}
+
+export interface AdminHotKnowledgeRow {
+  point: string;
+  count: number;
+  minutes: number;
+  correct: number;
+  wrong: number;
+  lastSeenAt: string;
+}
+
+export async function loadAdminActivity(page = 1) {
+  return request<{ rows: AdminActivityRow[]; page: number; pageSize: number; total: number; maxRows: number }>(
+    `/api/admin/activity?page=${encodeURIComponent(String(page))}&pageSize=20`
+  );
+}
+
+export async function loadAdminHotKnowledge(page = 1) {
+  return request<{ rows: AdminHotKnowledgeRow[]; page: number; pageSize: number; total: number; maxRows: number }>(
+    `/api/admin/hot-knowledge?page=${encodeURIComponent(String(page))}&pageSize=20`
+  );
+}
+
 export interface AdminUserRow {
   id: string;
   email: string;

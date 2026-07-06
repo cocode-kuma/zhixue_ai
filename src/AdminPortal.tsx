@@ -12,27 +12,30 @@ import {
 } from "@mui/material";
 import {
   BarChart3,
-  BookOpen,
   Building2,
+  Flame,
   History,
   LogOut,
   Moon,
+  Newspaper,
   RefreshCw,
   ShieldCheck,
   Sun,
   UserCog,
   Users
 } from "lucide-react";
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import {
   bulkCreateAdminUsers,
   createAdminClass,
   createAdminGuardianLink,
   forceUsersIntoClass,
+  loadAdminActivity,
   loadAdminAuditLogs,
   loadAdminClassStudents,
   loadAdminClasses,
   loadAdminDashboard,
+  loadAdminHotKnowledge,
   loadAdminUsers,
   removeAdminClassStudent,
   resetAdminUserPassword,
@@ -40,13 +43,15 @@ import {
   updateAdminUserProfile,
   updateAdminUserRole,
   updateAdminUserStatus,
+  type AdminActivityRow,
   type AdminAuditLog,
   type AdminClassRow,
+  type AdminHotKnowledgeRow,
   type AdminUserRow
 } from "./api";
 import type { UserProfile } from "./types";
 
-type AdminSection = "overview" | "accounts" | "classes" | "guardians" | "audit";
+type AdminSection = "overview" | "activity" | "knowledge" | "accounts" | "classes" | "guardians" | "audit";
 
 type AdminDashboardData = {
   totals: { totalUsers: number; activeUsers: number; totalMinutes: number; submittedAssignments: number };
@@ -78,7 +83,9 @@ type AdminClassStudent = {
 };
 
 const adminSections: Array<{ id: AdminSection; label: string; icon: typeof BarChart3; description: string }> = [
-  { id: "overview", label: "数据总览", icon: BarChart3, description: "全校活跃、趋势、热门知识点" },
+  { id: "overview", label: "数据总览", icon: BarChart3, description: "全校活跃、趋势、核心指标" },
+  { id: "activity", label: "学习动态", icon: Newspaper, description: "最近 1000 条，每页 20 条" },
+  { id: "knowledge", label: "热门知识点", icon: Flame, description: "按真实学习记录聚合" },
   { id: "accounts", label: "账号权限", icon: UserCog, description: "改角色、改密码、停用账号" },
   { id: "classes", label: "班级治理", icon: Building2, description: "建班、改班、强制入班" },
   { id: "guardians", label: "家校绑定", icon: Users, description: "给学生绑定家长账号" },
@@ -111,6 +118,12 @@ export function AdminPortal({
   const [classStudents, setClassStudents] = useState<AdminClassStudent[]>([]);
   const [guardianDraft, setGuardianDraft] = useState({ studentId: "", guardianEmail: "" });
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
+  const [activityRows, setActivityRows] = useState<AdminActivityRow[]>([]);
+  const [activityPage, setActivityPage] = useState(1);
+  const [activityTotal, setActivityTotal] = useState(0);
+  const [hotKnowledgeRows, setHotKnowledgeRows] = useState<AdminHotKnowledgeRow[]>([]);
+  const [knowledgePage, setKnowledgePage] = useState(1);
+  const [knowledgeTotal, setKnowledgeTotal] = useState(0);
   const [message, setMessage] = useState("");
   const [working, setWorking] = useState("");
   const [loading, setLoading] = useState(false);
@@ -161,8 +174,32 @@ export function AdminPortal({
     setAuditLogs(result.logs);
   }
 
+  async function refreshActivity(page = activityPage) {
+    setWorking("activity");
+    try {
+      const result = await loadAdminActivity(page);
+      setActivityRows(result.rows);
+      setActivityPage(result.page);
+      setActivityTotal(result.total);
+    } finally {
+      setWorking("");
+    }
+  }
+
+  async function refreshHotKnowledge(page = knowledgePage) {
+    setWorking("knowledge");
+    try {
+      const result = await loadAdminHotKnowledge(page);
+      setHotKnowledgeRows(result.rows);
+      setKnowledgePage(result.page);
+      setKnowledgeTotal(result.total);
+    } finally {
+      setWorking("");
+    }
+  }
+
   async function refreshAll() {
-    await Promise.all([loadDashboard(), refreshAdminOps(), refreshAuditLogs()]);
+    await Promise.all([loadDashboard(), refreshAdminOps(), refreshAuditLogs(), refreshActivity(1), refreshHotKnowledge(1)]);
   }
 
   useEffect(() => {
@@ -387,6 +424,28 @@ export function AdminPortal({
           <AdminOverview data={data} loading={loading} />
         ) : null}
 
+        {section === "activity" ? (
+          <AdminActivity
+            rows={activityRows}
+            page={activityPage}
+            total={activityTotal}
+            loading={working === "activity"}
+            onRefresh={() => void refreshActivity(activityPage)}
+            onPageChange={(page) => void refreshActivity(page)}
+          />
+        ) : null}
+
+        {section === "knowledge" ? (
+          <AdminHotKnowledge
+            rows={hotKnowledgeRows}
+            page={knowledgePage}
+            total={knowledgeTotal}
+            loading={working === "knowledge"}
+            onRefresh={() => void refreshHotKnowledge(knowledgePage)}
+            onPageChange={(page) => void refreshHotKnowledge(page)}
+          />
+        ) : null}
+
         {section === "accounts" ? (
           <AdminAccounts
             users={adminUsers}
@@ -479,23 +538,93 @@ function AdminOverview({ data, loading }: { data: AdminDashboardData | null; loa
       </Paper>
       <div className="dashboard-grid admin-grid">
         <AdminListCard title="用户结构" items={data.roleBreakdown.map((item) => ({ label: roleLabel(item.role), value: String(item.count) }))} empty="暂无用户数据。" />
-        <AdminListCard title="热门知识点" items={data.hotKnowledge.map((item) => ({ label: item.point, value: String(item.count) }))} empty="暂无真实学习数据。" />
+        <AdminListCard title="热门知识点概览" items={data.hotKnowledge.slice(0, 4).map((item) => ({ label: item.point, value: String(item.count) }))} empty="暂无真实学习数据。" />
         <AdminListCard title="班级平均掌握度" items={data.classMastery.map((item) => ({ label: `${item.className} · ${item.subject}`, value: `${item.averageMastery ?? 0}%` }))} empty="暂无班级数据。" />
         <AdminListCard title="最近用户" items={data.recentUsers.map((item) => ({ label: `${item.name || item.email} · ${roleLabel(item.role)}`, value: shortDate(item.createdAt) }))} empty="暂无用户。" />
       </div>
-      <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
-        <h2>最近学习动态</h2>
-        <div className="admin-activity-list">
-          {data.recentActivity.length ? data.recentActivity.map((item) => (
-            <div key={`${item.userEmail}-${item.createdAt}-${item.eventType}`}>
-              <span>{shortDate(item.createdAt)}</span>
-              <strong>{item.userName || item.userEmail}</strong>
-              <p>{item.eventType} · {item.knowledgePoint} · {item.minutes} 分钟 · 对 {item.correct} / 错 {item.wrong}</p>
-            </div>
-          )) : <div className="empty-tool">暂无学习动态。</div>}
-        </div>
-      </Paper>
     </Stack>
+  );
+}
+
+function AdminActivity({
+  rows,
+  page,
+  total,
+  loading,
+  onRefresh,
+  onPageChange
+}: {
+  rows: AdminActivityRow[];
+  page: number;
+  total: number;
+  loading: boolean;
+  onRefresh: () => void;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / 20));
+  return (
+    <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
+      <AdminSectionHeader
+        title="学习动态"
+        description="展示最近 1000 条真实学习行为，每页 20 条。"
+        action={<Button size="small" type="button" variant="outlined" onClick={onRefresh}>{loading ? "刷新中" : "刷新"}</Button>}
+      />
+      <div className="admin-activity-list admin-readable-list">
+        {rows.map((item) => {
+          const meta = learningEventMeta(item.eventType);
+          return (
+            <div key={item.id}>
+              <span>{shortDate(item.createdAt)} · {item.userName || item.userEmail} · {roleLabel(item.userRole)}</span>
+              <strong>{meta.title}</strong>
+              <p>{meta.description(item.knowledgePoint)} · 学习 {item.minutes} 分钟 · 正确 {item.correct} / 错误 {item.wrong}</p>
+            </div>
+          );
+        })}
+        {rows.length === 0 ? <div className="empty-tool">暂无学习动态。学生开始使用 AI 辅导、测验、错题复习后会自动出现。</div> : null}
+      </div>
+      <AdminPager page={page} totalPages={totalPages} total={total} onPageChange={onPageChange} />
+    </Paper>
+  );
+}
+
+function AdminHotKnowledge({
+  rows,
+  page,
+  total,
+  loading,
+  onRefresh,
+  onPageChange
+}: {
+  rows: AdminHotKnowledgeRow[];
+  page: number;
+  total: number;
+  loading: boolean;
+  onRefresh: () => void;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / 20));
+  return (
+    <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
+      <AdminSectionHeader
+        title="热门知识点"
+        description="基于最近 1000 条学习记录聚合，帮助校领导快速看到学生最常接触和最容易出错的内容。"
+        action={<Button size="small" type="button" variant="outlined" onClick={onRefresh}>{loading ? "刷新中" : "刷新"}</Button>}
+      />
+      <div className="admin-knowledge-table">
+        {rows.map((item, index) => (
+          <div key={item.point}>
+            <span className="admin-rank">{(page - 1) * 20 + index + 1}</span>
+            <strong>{item.point || "未归类知识点"}</strong>
+            <span>出现 {item.count} 次</span>
+            <span>学习 {item.minutes} 分钟</span>
+            <span>正确 {item.correct} / 错误 {item.wrong}</span>
+            <span>{shortDate(item.lastSeenAt)}</span>
+          </div>
+        ))}
+        {rows.length === 0 ? <div className="empty-tool">暂无热门知识点。系统不会使用模拟数据，学生产生真实学习记录后这里才会统计。</div> : null}
+      </div>
+      <AdminPager page={page} totalPages={totalPages} total={total} onPageChange={onPageChange} />
+    </Paper>
   );
 }
 
@@ -780,24 +909,57 @@ function AdminGuardians({
 function AdminAudit({ logs, onRefresh }: { logs: AdminAuditLog[]; onRefresh: () => void }) {
   return (
     <Paper component="section" className="admin-panel-card layui-card" elevation={0}>
-      <Stack direction="row" spacing={2} sx={{ alignItems: "center", justifyContent: "space-between" }}>
-        <Box>
-          <h2>管理员审计日志</h2>
-          <p>记录角色、密码、班级、家校绑定等敏感操作。</p>
-        </Box>
-        <Button size="small" type="button" variant="outlined" onClick={onRefresh}>刷新日志</Button>
-      </Stack>
+      <AdminSectionHeader
+        title="管理员审计日志"
+        description="记录角色、密码、班级、家校绑定等敏感操作。"
+        action={<Button size="small" type="button" variant="outlined" onClick={onRefresh}>刷新日志</Button>}
+      />
       <div className="admin-activity-list">
-        {logs.map((log) => (
-          <div key={log.id}>
-            <span>{shortDate(log.createdAt)} · {log.adminName || log.adminEmail}</span>
-            <strong>{log.action} · {log.targetType}:{log.targetId}</strong>
-            <p>{log.detail || "无详情"}</p>
-          </div>
-        ))}
+        {logs.map((log) => {
+          const action = adminActionMeta(log.action);
+          return (
+            <div key={log.id}>
+              <span>{shortDate(log.createdAt)} · 操作人：{log.adminName || log.adminEmail}</span>
+              <strong>{action} · {adminTargetLabel(log.targetType)}：{friendlyTargetId(log.targetId)}</strong>
+              <p>{friendlyDetail(log.detail)}</p>
+            </div>
+          );
+        })}
         {logs.length === 0 ? <div className="empty-tool">暂无管理员操作日志。</div> : null}
       </div>
     </Paper>
+  );
+}
+
+function AdminSectionHeader({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
+  return (
+    <Stack className="admin-section-heading" direction="row" spacing={2} sx={{ alignItems: "center", justifyContent: "space-between" }}>
+      <Box>
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </Box>
+      {action}
+    </Stack>
+  );
+}
+
+function AdminPager({
+  page,
+  totalPages,
+  total,
+  onPageChange
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <Stack className="admin-pager" direction="row" spacing={1.5} sx={{ alignItems: "center", justifyContent: "flex-end" }}>
+      <span>共 {total} 条 · 第 {page} / {totalPages} 页</span>
+      <Button size="small" type="button" variant="outlined" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>上一页</Button>
+      <Button size="small" type="button" variant="outlined" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>下一页</Button>
+    </Stack>
   );
 }
 
@@ -831,6 +993,88 @@ function roleLabel(role: string) {
   if (role === "teacher") return "老师";
   if (role === "parent") return "家长";
   return "学生";
+}
+
+function learningEventMeta(eventType: string) {
+  const labels: Record<string, { title: string; verb: string }> = {
+    chat: { title: "AI 辅导对话", verb: "围绕知识点学习" },
+    manual_wrong: { title: "手动加入错题", verb: "整理错题知识点" },
+    master_wrong: { title: "掌握错题", verb: "完成错题掌握" },
+    wrong_review: { title: "错题复习", verb: "复习错题知识点" },
+    knowledge_card: { title: "生成知识卡片", verb: "沉淀知识卡片" },
+    study_plan: { title: "生成学习计划", verb: "制定学习计划" },
+    quiz_generate: { title: "生成 AI 测验", verb: "创建测验主题" },
+    grading_wrong: { title: "批改后记录错题", verb: "从批改结果沉淀错题" }
+  };
+  const fallback = labels[eventType] ?? { title: humanizeToken(eventType), verb: "记录学习行为" };
+  return {
+    title: fallback.title,
+    description: (point: string) => `${fallback.verb}：${point || "未归类知识点"}`
+  };
+}
+
+function adminActionMeta(action: string) {
+  const labels: Record<string, string> = {
+    "user.role.update": "调整用户角色",
+    "user.password.reset": "重置用户密码",
+    "user.profile.update": "修改用户资料",
+    "user.status.update": "调整账号状态",
+    "class.students.force_add": "强制加入班级",
+    "users.bulk_create": "批量创建账号",
+    "class.create": "创建班级",
+    "class.update": "修改班级",
+    "class.student.remove": "移出班级成员",
+    "guardian.link.create": "创建家长绑定"
+  };
+  return labels[action] ?? humanizeToken(action);
+}
+
+function adminTargetLabel(targetType: string) {
+  const labels: Record<string, string> = {
+    user: "用户",
+    users: "用户",
+    class: "班级",
+    student: "学生",
+    guardian: "家长绑定"
+  };
+  return labels[targetType] ?? humanizeToken(targetType);
+}
+
+function friendlyTargetId(value: string) {
+  if (!value) return "未记录";
+  return value.replace(/^user_/, "用户 ").replace(/^class_/, "班级 ").replace(/^student_/, "学生 ");
+}
+
+function friendlyDetail(value: string) {
+  if (!value) return "无补充详情";
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const labels: Record<string, string> = {
+      guardianEmail: "家长邮箱",
+      role: "角色",
+      nextRole: "新角色",
+      status: "账号状态",
+      email: "邮箱",
+      name: "姓名",
+      grade: "年级/身份",
+      classId: "班级",
+      createdCount: "创建数量",
+      skippedCount: "跳过数量",
+      added: "新加入",
+      matched: "匹配账号"
+    };
+    return Object.entries(parsed)
+      .map(([key, item]) => `${labels[key] ?? humanizeToken(key)}：${String(item)}`)
+      .join("；") || "无补充详情";
+  } catch {
+    return value;
+  }
+}
+
+function humanizeToken(value: string) {
+  return value
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function shortDate(value: string) {

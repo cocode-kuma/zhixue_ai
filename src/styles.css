@@ -2622,6 +2622,27 @@ button {
   gap: 8px;
 }
 
+.admin-section-heading {
+  margin: -14px -14px 12px;
+  border-bottom: 1px solid var(--admin-line);
+  background: color-mix(in srgb, var(--admin-card) 92%, var(--admin-green-50));
+  padding: 10px 14px;
+}
+
+.admin-section-heading h2 {
+  min-height: 0;
+  margin: 0;
+  border-bottom: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.admin-section-heading p {
+  margin: 4px 0 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
 .admin-list > div,
 .admin-activity-list > div {
   display: grid;
@@ -2655,6 +2676,63 @@ button {
 
 .admin-activity-list p {
   margin: 0;
+}
+
+.admin-readable-list > div {
+  grid-template-columns: minmax(150px, 0.6fr) minmax(160px, 0.7fr) minmax(260px, 1.6fr);
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.admin-readable-list p {
+  color: var(--admin-text);
+}
+
+.admin-knowledge-table {
+  display: grid;
+  border: 1px solid var(--admin-line);
+  background: var(--admin-card);
+}
+
+.admin-knowledge-table > div {
+  display: grid;
+  grid-template-columns: 42px minmax(180px, 1.4fr) repeat(4, minmax(110px, 0.8fr));
+  gap: 10px;
+  align-items: center;
+  min-height: 46px;
+  border-bottom: 1px solid var(--admin-line);
+  padding: 10px 12px;
+}
+
+.admin-knowledge-table > div:last-child {
+  border-bottom: 0;
+}
+
+.admin-knowledge-table strong {
+  color: var(--admin-text);
+  font-size: 14px;
+}
+
+.admin-knowledge-table span {
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
+.admin-rank {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 2px;
+  background: var(--admin-green-50);
+  color: var(--admin-green-700) !important;
+  font-weight: 760;
+}
+
+.admin-pager {
+  margin-top: 12px;
+  color: var(--admin-muted);
+  font-size: 13px;
 }
 
 .admin-ops.MuiPaper-root {
@@ -2907,9 +2985,17 @@ button {
   .admin-management-grid,
   .admin-user-row,
   .admin-profile-fields,
+  .admin-readable-list > div,
+  .admin-knowledge-table > div,
   .about-hero,
   .about-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .admin-section-heading,
+  .admin-pager {
+    align-items: flex-start !important;
+    flex-direction: column !important;
   }
 
   .about-version-card {
